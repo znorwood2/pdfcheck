@@ -37,17 +37,33 @@ def predict_score(findings: list[Finding]) -> ScorePrediction:
             "medium",
             "Issue combination and occurrence counts match one September 2026 calibration specimen; Ally may also use document composition.",
         )
-    known = [SINGLE_ISSUE_SCORES[c] / 100 for c in counts.elements() if c in SINGLE_ISSUE_SCORES]
+    known = [c for c in counts.elements() if c in SINGLE_ISSUE_SCORES]
     unknown = sorted(c for c in counts if c not in SINGLE_ISSUE_SCORES)
     if not known:
         return ScorePrediction(None, "low", "No calibrated score is available for this issue combination.")
-    product = 1.0
-    for factor in known:
-        product *= factor
-    estimate = max(0, min(100, round(product * 100)))
+    estimate, multiplicative = _additive_estimate(known), _multiplicative_estimate(known)
     occurrence_count = sum(counts.values())
     spread = 8 + 4 * max(0, occurrence_count - 2) + 5 * len(unknown)
     return ScorePrediction(
-        estimate, "low", "Uncalibrated combination; estimate multiplies observed single-issue score ratios.",
-        max(0, estimate - spread), min(100, estimate + spread),
+        estimate,
+        "low",
+        "Uncalibrated combination; estimate subtracts each issue's observed single-issue point loss "
+        f"(multiplying score ratios instead gives {multiplicative}).",
+        max(0, min(estimate, multiplicative) - spread), min(100, max(estimate, multiplicative) + spread),
     )
+
+
+def _additive_estimate(codes: list[str]) -> int:
+    """100 minus the sum of observed single-issue point losses.
+
+    On the only fully-known calibrated combination (Tagged + Title +
+    LanguagePresence, observed 6) this predicts 5; multiplication predicts 11.
+    """
+    return max(0, 100 - sum(100 - SINGLE_ISSUE_SCORES[c] for c in codes))
+
+
+def _multiplicative_estimate(codes: list[str]) -> int:
+    product = 1.0
+    for code in codes:
+        product *= SINGLE_ISSUE_SCORES[code] / 100
+    return max(0, min(100, round(product * 100)))

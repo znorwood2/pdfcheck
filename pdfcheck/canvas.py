@@ -54,7 +54,15 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
         out.append(_finding("TableHeaders:2", "Table is missing headers", "major", f"{tables_missing_headers} {noun} {verb} no TH cells.", "Identify row or column headers and set their scope.", occurrences=tables_missing_headers))
 
     if facts.probable_low_contrast_text:
-        out.append(_finding("Contrast:2", "Text may have insufficient contrast", "major", "Very light painted text was found.", "Check text against its actual background.", "medium"))
+        ratio = facts.lowest_text_contrast
+        # Ally flagged white text (ratio 1.0) in the calibration corpus. Where
+        # Ally draws the line between 1.0 and WCAG's 4.5:1 is not yet observed.
+        confidence = "medium" if ratio < 1.5 else "low"
+        out.append(_finding(
+            "Contrast:2", "Text may have insufficient contrast", "major",
+            f"Lowest text contrast against a white page is {ratio:.2f}:1 (WCAG AA needs 4.5:1 for body text).",
+            "Darken the text, or check it against its actual background if it sits on a dark fill.", confidence,
+        ))
 
     # TODO: Ally's Scanned/Ocred and LanguageCorrect classifiers are not yet
     # reproducible from the public documentation and current calibration set.

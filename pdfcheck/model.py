@@ -28,7 +28,12 @@ class DocumentFacts:
     page_image_counts: list[int] = field(default_factory=list)
     page_image_errors: list[bool] = field(default_factory=list)
     table_header_presence: list[bool] = field(default_factory=list)
-    probable_low_contrast_text: bool = False
+    # Lowest WCAG contrast ratio of painted text against an assumed white page.
+    lowest_text_contrast: float | None = None
+
+    @property
+    def probable_low_contrast_text(self) -> bool:
+        return self.lowest_text_contrast is not None and self.lowest_text_contrast < 4.5
 
     @property
     def headings(self) -> list[StructureElement]:
