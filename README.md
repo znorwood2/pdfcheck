@@ -47,7 +47,7 @@ Exit status is `1` when a Severe or Major automated finding is present, otherwis
 - missing title (`Title:3`; Ally reads the Info dictionary `/Title`, so an XMP-only title still fails)
 - missing language (`LanguagePresence:3`)
 - invalid or mismatched language (`LanguageCorrect:3`, low confidence): a value that is not a language code, or a declared language that disagrees with a function-word guess for English, Spanish, French, German, Italian, Portuguese or Dutch text. The score effect is observed; the code Ally displays has not been recorded yet
-- probable scan (`Scanned:1`, low confidence): every page is a single image covering at least 90% of the page with no visible text. Ally scored such files 0 but did not flag a LaTeX page whose image covered 58%
+- probable scan (`Scanned:1`, low confidence): every page is mostly one image (at least 65% of the page) with under about 200 visible characters. Ally scored image PDFs at 70%, 80% and 100% coverage 0, even with an invisible OCR layer or a visible footer, but did not flag fixture 15 (58%, PNG). Whether coverage, image encoding or producer drives this is being tested
 - no headings in PDFs of at least three pages (`HeadingsPresence:2`)
 - first heading not H1 (`HeadingsStartAtOne:3`)
 - skipped heading level (`HeadingsSequential:3`)
@@ -60,14 +60,14 @@ Role maps are resolved, so modern LaTeX structure names such as `/section` mappe
 
 ## Ally score model
 
-Calibration so far (38 Ally observations, September and October 2026) supports a simple model:
+Calibration so far (46 Ally observations, September and October 2026) fits this model:
 
-- **Point losses add.** Each issue costs what it cost alone (for example untagged 88, missing language 5), and combinations subtract the sum from 100. Every observed combination matched exactly, apart from fixture 15 (predicted 5, observed 6). Multiplying score ratios was ruled out.
-- **The score does not fall below 5** unless there is a severe issue. Grey text plus a missing alt text would add up to well below zero but scored 5.
-- **A scanned PDF scores 0.**
-- **Contrast is the exception:** it cost 95 points on a one-page file but about 48 on a two-page file, whether one page or both were grey. The tool currently divides the contrast loss by page count, which fits those two files only (low confidence; batch `ally-2026-10b` tests it).
+- **Minor issues subtract.** Each minor (severity 3) issue costs the points it cost alone: missing title 2, missing language 5. Untagged plus no language scored 12 − 5 = 7; missing alt text plus no title and no language scored 54 − 2 − 5 = 47. Multiplying did not fit these.
+- **Major issues multiply.** Missing headings (54) plus grey text on three pages scored 54 × 0.68 = 37; subtracting predicted 22. This rests on one observation and is low confidence until batch `ally-2026-10c` confirms it.
+- **The score does not fall below 5** unless there is a severe issue, and a scanned PDF scores 0.
+- **Contrast scales with page count:** grey text cost 95 points on one page and about 48 on two, whether one page or both were grey. The tool divides the loss by page count.
 
-Exact matches to an observed file report medium confidence; so do unobserved combinations of issues with known single scores. Repeated issues (for example two images without alt text), page-count-dependent contrast, inferred codes and uncalibrated issues are low confidence and show a range.
+Exact matches to an observed file, and combinations of one calibrated major issue with minor issues, report medium confidence. Several major issues, repeated issues (for example two images without alt text), multi-page contrast, inferred codes and uncalibrated issues are low confidence and show a range.
 
 ## Full audit
 
@@ -75,7 +75,7 @@ The initial full mode adds probable image-only-page detection, multi-page headin
 
 ## Known limitations and TODOs
 
-- Pin down Ally's `Scanned:1` image-coverage threshold (between 58% and 100%) and reproduce `Ocred:2`. A full-page image with an invisible OCR layer still scored 0.
+- Pin down what Ally's `Scanned:1` keys on and reproduce `Ocred:2`. A full-page image with an invisible OCR layer still scored 0.
 - Replace the function-word language guess with a proper detector if real documents produce false `LanguageCorrect:3` results.
 - Replace the contrast operator heuristic with rendered foreground/background analysis. White text can be valid on a dark background, and text inside images is not checked.
 - Select a cross-platform rendering/geometry backend after reviewing fidelity and licensing, then add reading-order, overlap, clipping, contrast, and effective-resolution checks.
@@ -122,7 +122,8 @@ python tools/build_test_corpus.py
 Each folder under `probes/` is a batch of PDFs, each a copy of a scored fixture with one property changed. `PROBES.md` lists each question, pdfcheck's prediction and, once recorded, Ally's result. Filled-in `results.csv` files are run as regression tests by `tests/test_probe_results.py`.
 
 - `ally-2026-10/`: 22 probes, results recorded 2026-10-21.
-- `ally-2026-10b/`: 8 follow-ups on the contrast page-count effect, the scan threshold, and the alt-text filename rule.
+- `ally-2026-10b/`: 8 follow-ups on contrast and page count, the scan threshold, and the alt-text filename rule; results recorded.
+- `ally-2026-10c/`: 7 probes testing whether major issues multiply, contrast on three pages, and what triggers `Scanned` (image coverage, JPEG encoding, a tagged handout with a large figure).
 
 1. Upload the PDFs to a Canvas course where Ally is enabled (an unpublished sandbox course is fine).
 2. Wait for Ally to finish processing, then open each file's Ally indicator.

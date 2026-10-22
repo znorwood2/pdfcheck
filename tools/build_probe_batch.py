@@ -406,6 +406,135 @@ def _():
     return writer
 
 
+
+# ===========================================================================
+# Batch 3 (ally-2026-10c): do major issues multiply, how contrast scales with
+# pages, and what Ally's scan classifier keys on.
+# ===========================================================================
+BATCH = "ally-2026-10c"
+
+
+def struct_with_parents(writer: PdfWriter):
+    """Yield (parent, element) for every structure element."""
+    pending = [writer.root_object["/StructTreeRoot"].get_object()]
+    while pending:
+        node = pending.pop()
+        kids = node.get("/K", [])
+        kids = kids if isinstance(kids, list) else [kids]
+        for kid in kids:
+            try:
+                obj = kid.get_object()
+            except AttributeError:
+                continue
+            if hasattr(obj, "get") and "/S" in obj:
+                yield node, obj
+                pending.append(obj)
+
+
+def retag(element, tag: str) -> None:
+    element[NameObject("/S")] = NameObject(tag)
+    element.pop(NameObject("/NS"), None)  # standard PDF 1.7 structure type
+
+
+def first_paragraph_to_h1(writer: PdfWriter) -> None:
+    for _, element in struct_with_parents(writer):
+        if element.get("/S") == "/text":
+            retag(element, "/H1")
+            return
+    raise RuntimeError("no paragraph to retag")
+
+
+def wrap_in_table(writer: PdfWriter, parent_tag: str) -> None:
+    """Retag the first /text under parent_tag as a TD inside a new Table > TR."""
+    for parent, element in struct_with_parents(writer):
+        if parent.get("/S") == parent_tag and element.get("/S") == "/text":
+            break
+    else:
+        raise RuntimeError(f"no /text under {parent_tag}")
+    kids = parent["/K"] if isinstance(parent["/K"], list) else ArrayObject([parent["/K"]])
+    index = next(i for i, kid in enumerate(kids) if hasattr(kid, "get_object") and kid.get_object() is element)
+    element_ref = kids[index]
+    table = DictionaryObject({NameObject("/Type"): NameObject("/StructElem"), NameObject("/S"): NameObject("/Table"),
+                              NameObject("/P"): element[NameObject("/P")]})
+    table_ref = writer._add_object(table)
+    row = DictionaryObject({NameObject("/Type"): NameObject("/StructElem"), NameObject("/S"): NameObject("/TR"),
+                            NameObject("/P"): table_ref, NameObject("/K"): ArrayObject([element_ref])})
+    row_ref = writer._add_object(row)
+    table[NameObject("/K")] = ArrayObject([row_ref])
+    retag(element, "/TD")
+    element[NameObject("/P")] = row_ref
+    kids[index] = table_ref
+    parent[NameObject("/K")] = kids
+
+
+@probe("X01_no_alt_and_table_no_headers.pdf", "12_figure_without_alt.pdf", "Caption text re-tagged as a one-cell table without TH",
+       "AlternativeText:2 + TableHeaders:2. Multiplying predicts 37; subtracting predicts 23.", 1)
+def _():
+    writer = load("12_figure_without_alt.pdf")
+    wrap_in_table(writer, "/Caption")
+    return writer
+
+
+@probe("X02_three_pages_with_h1.pdf", "06_no_headings_3_pages.pdf", "First visual label re-tagged as H1",
+       "Control for X03/X04: should score 100 now that a heading exists.", 1)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    first_paragraph_to_h1(writer)
+    return writer
+
+
+@probe("X03_three_pages_with_h1_grey.pdf", "06_no_headings_3_pages.pdf", "X02 with all text #AAAAAA",
+       "Contrast alone on three pages. Dividing by page count predicts 68.", 1)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    first_paragraph_to_h1(writer)
+    recolour_text(writer, 0xAA / 255)
+    return writer
+
+
+@probe("X04_three_pages_with_h1_page1_grey.pdf", "06_no_headings_3_pages.pdf", "X02 with only page 1 text #AAAAAA",
+       "Does it matter how many pages are grey? Compare with X03.", 2)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    first_paragraph_to_h1(writer)
+    recolour_text(writer, 0xAA / 255, pages=[0])
+    return writer
+
+
+@probe("S06_jpeg_scan_at_58pct.pdf", "S01_scanner_style_image.pdf", "S01's JPEG image placed exactly where fixture 15's image is (58% of page)",
+       "If this scores 0, image coverage is not why fixture 15 escaped Scanned.", 1)
+def _():
+    writer = scanner_style_pdf(with_ocr=False)
+    set_content(writer, 0, b"q 468.0 0 0 596.18 72 123.826 cm /image Do Q\n")
+    return writer
+
+
+@probe("S07_fixture15_with_jpeg_image.pdf", "15_image_only_scan.pdf", "Image swapped for S01's greyscale JPEG; same size, position and producer",
+       "If this scores 0, image encoding (JPEG vs PNG) drives Scanned.", 1)
+def _():
+    writer = load("15_image_only_scan.pdf")
+    source = scanner_style_pdf(with_ocr=False)
+    jpeg = source.pages[0]["/Resources"]["/XObject"]["/image"].get_object()
+    xobjects = writer.pages[0]["/Resources"]["/XObject"]
+    xobjects[NameObject("/Im1")] = writer._add_object(jpeg.clone(writer))
+    return writer
+
+
+@probe("S08_tagged_handout_big_figure.pdf", "11_figure_with_alt.pdf", "Figure (with alt text) enlarged to cover 85% of the page",
+       "Does a tagged handout with a large picture count as scanned? pdfcheck currently says yes.", 1)
+def _():
+    writer = load("11_figure_with_alt.pdf")
+    data = writer.pages[0].get_contents().get_data()
+    k, x0, y0 = 0.2808, 137.52, 542.985  # the figure's existing transforms
+    w, h = 612 * 0.92, 792 * 0.92
+    x, y = (612 - w) / 2, (792 - h) / 2
+    new = f"{w / k:.3f} 0 0 {h / k:.3f} {(x - x0) / k:.3f} {(y - y0) / k:.3f} cm".encode()
+    if data.count(b"1200 0 0 500 0 0 cm") != 1:
+        raise RuntimeError("figure transform not found")
+    set_content(writer, 0, data.replace(b"1200 0 0 500 0 0 cm", new))
+    return writer
+
+
 def main(batch: str) -> None:
     probes = [p for p in PROBES if p["batch"] == batch]
     if not probes:

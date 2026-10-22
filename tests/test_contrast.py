@@ -10,7 +10,7 @@ from pypdf.generic import (
 from pdfcheck.canvas import run_canvas_checks
 from pdfcheck.extract import extract_facts
 from pdfcheck.model import DocumentFacts
-from pdfcheck.scoring import additive_estimate
+from pdfcheck.scoring import estimate_score
 
 
 def _stream(writer: PdfWriter, data: bytes, extra: dict | None = None):
@@ -103,12 +103,16 @@ class ContrastTests(unittest.TestCase):
 
 
 class FallbackScoreTests(unittest.TestCase):
-    def test_additive_model_fits_observed_untagged_combination(self):
+    def test_estimate_fits_observed_untagged_combination(self):
         # Ally scored Tagged + Title + LanguagePresence at 6 (fixture 15).
-        self.assertLessEqual(abs(additive_estimate(["Tagged:2", "Title:3", "LanguagePresence:3"]) - 6), 1)
+        self.assertLessEqual(abs(estimate_score(["Tagged:2", "Title:3", "LanguagePresence:3"]) - 6), 1)
+
+    def test_major_issues_multiply(self):
+        # HeadingsPresence + Contrast on three pages scored 37 (probe C10).
+        self.assertEqual(37, estimate_score(["HeadingsPresence:2", "Contrast:2"], page_count=3))
 
     def test_score_never_drops_below_floor(self):
-        self.assertEqual(5, additive_estimate(["AlternativeText:2", "Contrast:2"]))
+        self.assertEqual(5, estimate_score(["AlternativeText:2", "Contrast:2"]))
 
 
 if __name__ == "__main__":

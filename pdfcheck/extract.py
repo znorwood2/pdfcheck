@@ -148,11 +148,14 @@ class _PageScan:
 
     def __init__(self) -> None:
         self.lowest_contrast: float | None = None
-        self.visible_text_ops = 0
+        self.visible_text_chars = 0
         self.image_boxes: list[tuple[float, float, float, float]] = []
 
-    def text(self, ratio: float | None) -> None:
-        self.visible_text_ops += 1
+    def text(self, ratio: float | None, operands: list[Any]) -> None:
+        # Bytes, not characters: two-byte fonts count double. Precise enough
+        # to tell a footer from a page of text.
+        strings = operands[0] if operands and isinstance(operands[0], list) else operands
+        self.visible_text_chars += sum(len(x) for x in strings if isinstance(x, (bytes, str)))
         if ratio is not None:
             self.lowest_contrast = ratio if self.lowest_contrast is None else min(self.lowest_contrast, ratio)
 
@@ -203,9 +206,9 @@ def _scan_content(stream_owner: Any, resources: Any, reader: PdfReader, scan: _P
                 # and 5 stroke rather than fill, which this check does not model.
                 if state["mode"] in {0, 2, 4, 6}:
                     rgb = state["rgb"]
-                    scan.text(None if rgb is None else _contrast_against_white(rgb, state["alpha"]))
+                    scan.text(None if rgb is None else _contrast_against_white(rgb, state["alpha"]), operands)
                 elif state["mode"] in {1, 5}:
-                    scan.text(None)
+                    scan.text(None, operands)
             elif op == "BI":
                 scan.image_boxes.append(_unit_square_bbox(state["ctm"]))
             elif op == "Do":
@@ -262,7 +265,7 @@ def _scan_pages(reader: PdfReader, facts: DocumentFacts) -> None:
                 _scan_content(contents, resources, reader, scan, [1, 0, 0, 1, 0, 0], 0, set())
         except Exception:
             pass
-        facts.page_visible_text_ops.append(scan.visible_text_ops)
+        facts.page_visible_text_chars.append(scan.visible_text_chars)
         facts.page_largest_image_coverage.append(_largest_image_coverage(scan.image_boxes, page.mediabox))
         if scan.lowest_contrast is not None:
             worst = scan.lowest_contrast if worst is None else min(worst, scan.lowest_contrast)

@@ -104,11 +104,12 @@ class EdgeCaseTests(unittest.TestCase):
 
     def test_full_page_image_without_visible_text_is_scanned(self):
         def codes(coverage, text_ops):
-            facts = DocumentFacts(path=Path("s.pdf"), page_count=1, page_largest_image_coverage=[coverage], page_visible_text_ops=[text_ops])
+            facts = DocumentFacts(path=Path("s.pdf"), page_count=1, page_largest_image_coverage=[coverage], page_visible_text_chars=[text_ops])
             return {x.ally_code for x in run_canvas_checks(facts)}
         self.assertIn("Scanned:1", codes(1.0, 0))
         self.assertNotIn("Scanned:1", codes(0.58, 0))  # fixture 15 was not flagged
-        self.assertNotIn("Scanned:1", codes(1.0, 5))   # visible text over a background image
+        self.assertIn("Scanned:1", codes(0.7, 23))      # probe S05: a footer line
+        self.assertNotIn("Scanned:1", codes(1.0, 2000))  # a page of text over a background
 
     def test_scanned_scores_zero(self):
         finding = Finding("canvas.scanned:1", "Scanned", "severe", "low", "m", "s", "Scanned:1")

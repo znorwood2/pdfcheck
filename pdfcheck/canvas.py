@@ -4,9 +4,13 @@ from .language import detect_language, is_valid_language_tag, primary_subtag
 from .model import DocumentFacts, Finding
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".svg", ".webp", ".eps", ".pdf")
-# Ally scored a full-page image PDF 0 (probes S01/S02, October 2026) but did not
-# flag a LaTeX page whose image covered 58% of the page (fixture 15).
-SCAN_IMAGE_COVERAGE = 0.9
+# Ally scored image PDFs 0 when the image covered 70%, 80% or 100% of the page,
+# even with an invisible OCR layer or a visible footer line (probes S01-S05).
+# It did not flag fixture 15, whose image covered 58%, but that file also
+# differs in image encoding and producer; batch ally-2026-11 separates these.
+SCAN_IMAGE_COVERAGE = 0.65
+# A page with more visible text than this is not treated as a scan.
+SCAN_MAX_VISIBLE_CHARS = 200
 
 
 def alt_is_filename(alt: str) -> bool:
@@ -14,8 +18,8 @@ def alt_is_filename(alt: str) -> bool:
 
 
 def _looks_scanned(facts: DocumentFacts) -> bool:
-    pages = list(zip(facts.page_largest_image_coverage, facts.page_visible_text_ops))
-    return bool(pages) and all(cover >= SCAN_IMAGE_COVERAGE and text == 0 for cover, text in pages)
+    pages = list(zip(facts.page_largest_image_coverage, facts.page_visible_text_chars))
+    return bool(pages) and all(cover >= SCAN_IMAGE_COVERAGE and text <= SCAN_MAX_VISIBLE_CHARS for cover, text in pages)
 
 
 def _finding(
@@ -38,7 +42,7 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
     if _looks_scanned(facts):
         out.append(_finding(
             "Scanned:1", "PDF appears to be scanned", "severe",
-            "Every page is a near-full-page image with no visible text.",
+            "Every page is mostly one image with little or no visible text.",
             "Provide the original digital document, or run OCR and then tag the result.", "low",
         ))
     if not facts.tagged:

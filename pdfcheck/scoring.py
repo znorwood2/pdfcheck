@@ -35,7 +35,7 @@ SCORE_FLOOR = 5
 # full-page image PDFs that scored 0 (probes S01 and S02).
 ZERO_SCORE_CODES = {"Scanned:1"}
 
-# Exact observations. The additive model reproduces every one of these except
+# Exact observations. The estimate reproduces every one of these except
 # fixture 15 (predicts 5, observed 6), so the table mostly guards regressions.
 CALIBRATED_COMBINATIONS: dict[tuple[tuple[str, int], ...], int] = {
     (): 100,
@@ -55,9 +55,9 @@ CALIBRATED_COMBINATIONS.update({
 def _point_loss(code: str, page_count: int | None) -> float:
     loss = 100 - SINGLE_ISSUE_SCORES[code]
     if code == "Contrast:2" and page_count and page_count > 1:
-        # Grey text cost 95 points on a one-page file but about 48 on a
-        # two-page file, whether one page or both were grey (probes C07, C08).
-        # Dividing by page count fits those two observations only.
+        # Grey text cost 95 points on one-page files (C01-C05, C09), about 48
+        # on two pages whether one or both were grey (C07, C08), and fits a
+        # third on three pages (C10). Probe batch ally-2026-11 isolates it.
         loss /= page_count
     return loss
 
@@ -66,14 +66,26 @@ def _contrast_is_extrapolated(counts: Counter[str], page_count: int | None) -> b
     return "Contrast:2" in counts and page_count != 1
 
 
-def additive_estimate(codes: list[str], page_count: int | None = 1) -> int:
-    """100 minus each issue's observed single-issue point loss, floored at 5.
+def _is_minor(code: str) -> bool:
+    return code.endswith(":3")
 
-    This matched all three new combinations in the October 2026 probes
-    exactly (7, 10, 47), where multiplying score ratios predicted 11, 12, 50.
+
+def estimate_score(codes: list[str], page_count: int | None = 1) -> int:
+    """Estimate a score from observed single-issue scores.
+
+    Major issues (severity 2) multiply: AlternativeText + Contrast and
+    HeadingsPresence + three-page Contrast (54 x 0.683 = 37, observed 37)
+    fit this; adding them did not. Minor issues (severity 3) then subtract
+    their point loss: untagged + no language scored 12 - 5 = 7 and missing
+    alt + title + language scored 54 - 2 - 5 = 47, which multiplying did not
+    fit. The result never falls below 5.
     """
-    raw = 100 - sum(_point_loss(code, page_count) for code in codes)
-    return max(SCORE_FLOOR, int(raw + 0.5))
+    score = 100.0
+    for code in codes:
+        if not _is_minor(code):
+            score *= 1 - _point_loss(code, page_count) / 100
+    score -= sum(_point_loss(code, page_count) for code in codes if _is_minor(code))
+    return max(SCORE_FLOOR, int(score + 0.5))
 
 
 def predict_score(findings: list[Finding], page_count: int | None = 1) -> ScorePrediction:
@@ -98,19 +110,22 @@ def predict_score(findings: list[Finding], page_count: int | None = 1) -> ScoreP
     unknown = sorted(c for c in counts if c not in SINGLE_ISSUE_SCORES)
     if not known:
         return ScorePrediction(None, "low", "No calibrated score is available for this issue combination.")
-    estimate = additive_estimate(known, page_count)
+    estimate = estimate_score(known, page_count)
     repeated = any(n > 1 for n in counts.values())
     extrapolated = _contrast_is_extrapolated(counts, page_count) or bool(INFERRED_CODES & set(counts))
-    if not unknown and not repeated and not extrapolated:
+    majors = sum(1 for c in counts if not _is_minor(c))
+    if not unknown and not repeated and not extrapolated and majors <= 1:
         return ScorePrediction(
             estimate, "medium",
-            "Unobserved combination of calibrated issues; Ally's point losses have added up in every observed combination.",
+            "Unobserved combination of calibrated issues; minor-issue point losses have subtracted exactly in every observed combination.",
         )
+    if majors > 1:
+        extrapolated = True
     reasons = []
     if repeated:
         reasons.append("repeated issues (whether Ally scales by count is unknown)")
     if extrapolated:
-        reasons.append("issues whose score is inferred or depends on page count")
+        reasons.append("several major issues, inferred codes, or page-count-dependent contrast (one observation each)")
     if unknown:
         reasons.append(f"uncalibrated issues {unknown}")
     spread = 8 + 4 * max(0, sum(counts.values()) - 2) + 5 * len(unknown)
