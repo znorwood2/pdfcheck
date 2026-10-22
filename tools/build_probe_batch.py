@@ -630,6 +630,61 @@ def _():
     return writer
 
 
+
+# ===========================================================================
+# Batch 5 (ally-2026-10e): which tables Ally checks, and what "page count"
+# means for the penalties that shrink on longer documents.
+# ===========================================================================
+BATCH = "ally-2026-10e"
+
+
+def drop_table_rows(writer: PdfWriter, keep: int) -> None:
+    for _, element in struct_with_parents(writer):
+        if element.get("/S") == "/Table":
+            element[NameObject("/K")] = ArrayObject(list(element["/K"])[:keep])
+            return
+    raise RuntimeError("no table")
+
+
+@probe("Z01_table_two_rows.pdf", "14_table_without_headers.pdf", "Third table row removed from the tags (2 rows, one page)",
+       "Fixture 14 (3 rows) lost 31 points. Does a 2-row table still count? pdfcheck says no.", 1)
+def _():
+    writer = load("14_table_without_headers.pdf")
+    drop_table_rows(writer, 2)
+    return writer
+
+
+@probe("Z02_table_one_row.pdf", "14_table_without_headers.pdf", "Only the first table row kept in the tags (1 row of 2 cells)",
+       "Does a one-row table count?", 2)
+def _():
+    writer = load("14_table_without_headers.pdf")
+    drop_table_rows(writer, 1)
+    return writer
+
+
+def add_blank_pages(writer: PdfWriter, count: int) -> None:
+    box = writer.pages[0].mediabox
+    for _ in range(count):
+        writer.add_blank_page(width=float(box.width), height=float(box.height))
+
+
+@probe("Z03_grey_plus_two_blank_pages.pdf", "01_tagged_baseline.pdf", "All text #AAAAAA, then two blank pages added",
+       "Do blank pages count toward the contrast page scaling? 68 if they do, 5 if only pages with text count.", 1)
+def _():
+    writer = load("01_tagged_baseline.pdf")
+    recolour_text(writer, 0xAA / 255)
+    add_blank_pages(writer, 2)
+    return writer
+
+
+@probe("Z04_no_alt_plus_two_blank_pages.pdf", "12_figure_without_alt.pdf", "Two blank pages added",
+       "Does the missing-alt penalty (46 on one page) shrink on a three-page file like contrast does?", 1)
+def _():
+    writer = load("12_figure_without_alt.pdf")
+    add_blank_pages(writer, 2)
+    return writer
+
+
 def main(batch: str) -> None:
     probes = [p for p in PROBES if p["batch"] == batch]
     if not probes:

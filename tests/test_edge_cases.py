@@ -39,6 +39,7 @@ class EdgeCaseTests(unittest.TestCase):
     def test_each_table_must_have_a_header(self):
         facts = DocumentFacts(path=Path("tables.pdf"), tagged=True, title="Title", language="en")
         facts.table_header_presence = [True, False]
+        facts.table_row_counts = [3, 3]
         finding = next(x for x in run_canvas_checks(facts) if x.ally_code == "TableHeaders:2")
         self.assertEqual(1, finding.occurrences)
 

@@ -20,9 +20,9 @@ from pdfcheck.extract import extract_facts
 from pdfcheck.scoring import predict_score
 
 try:
-    from ally_issue_text import issue_codes
+    from ally_issue_text import issue_codes, split_issues
 except ImportError:  # run as a package module
-    from tests.ally_issue_text import issue_codes
+    from tests.ally_issue_text import issue_codes, split_issues
 
 PROBES = Path(__file__).resolve().parents[1] / "probes"
 
@@ -48,8 +48,8 @@ class ProbeResultTests(unittest.TestCase):
                 recorded = issue_codes(row.get("ally_issue_codes", ""))
                 if recorded is not None:
                     self.assertEqual(recorded, {x.ally_code for x in findings if x.ally_code})
-                for part in filter(str.strip, (row.get("ally_fix_scores") or "").split(";")):
-                    description, _, number = part.strip().rpartition(" ")
+                for part in split_issues(row.get("ally_fix_scores") or ""):
+                    description, _, number = part.rpartition(" ")
                     (code,) = issue_codes(description)
                     remaining = [x for x in findings if x.ally_code != code]
                     with self.subTest(fixed=code):

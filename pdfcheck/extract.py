@@ -42,6 +42,7 @@ def _walk_structure(
     table_headers: list[bool],
     active_table: int | None = None,
     table_cells: list[int] | None = None,
+    table_rows: list[int] | None = None,
 ) -> None:
     try:
         obj = node.get_object()
@@ -65,6 +66,11 @@ def _walk_structure(
             table_headers.append(False)
             if table_cells is not None:
                 table_cells.append(0)
+            if table_rows is not None:
+                table_rows.append(0)
+        elif resolved == "/TR" and active_table is not None:
+            if table_rows is not None:
+                table_rows[active_table] += 1
         elif resolved in {"/TH", "/TD"} and active_table is not None:
             if resolved == "/TH":
                 table_headers[active_table] = True
@@ -74,7 +80,7 @@ def _walk_structure(
     if not isinstance(children, list):
         children = [children]
     for child in children:
-        _walk_structure(child, rolemap, output, seen, table_headers, active_table, table_cells)
+        _walk_structure(child, rolemap, output, seen, table_headers, active_table, table_cells, table_rows)
 
 
 def _srgb_to_linear(channel: float) -> float:
@@ -309,7 +315,7 @@ def extract_facts(path: str | Path, password: str | None = None) -> DocumentFact
             except Exception:
                 pass
             rolemap = {str(k): v for k, v in rolemap_obj.items()} if hasattr(rolemap_obj, "items") else {}
-            _walk_structure(tree, rolemap, facts.structure, set(), facts.table_header_presence, None, facts.table_cell_counts)
+            _walk_structure(tree, rolemap, facts.structure, set(), facts.table_header_presence, None, facts.table_cell_counts, facts.table_row_counts)
         for page in reader.pages:
             try:
                 facts.page_text.append(page.extract_text() or "")

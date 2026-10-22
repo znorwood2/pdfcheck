@@ -43,6 +43,12 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
+def split_issues(cell: str) -> list[str]:
+    """Split a cell on ";", or on " : " / " | " between descriptions."""
+    cell = re.sub(r"\s+[:|]\s+", ";", cell.strip())
+    return [part.strip() for part in cell.split(";") if part.strip()]
+
+
 def issue_codes(cell: str) -> set[str] | None:
     """Codes for a results.csv cell; None when the cell is blank.
 

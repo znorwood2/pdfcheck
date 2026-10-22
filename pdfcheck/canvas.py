@@ -11,6 +11,7 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".
 SCAN_IMAGE_COVERAGE = 0.65
 # A page with more visible text than this is not treated as a scan.
 SCAN_MAX_VISIBLE_CHARS = 200
+MIN_TABLE_ROWS = 3
 
 
 def alt_is_filename(alt: str) -> bool:
@@ -103,17 +104,19 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
         noun = "Figure element" if total == 1 else "Figure elements"
         out.append(_finding("AlternativeText:2", "Images lack descriptions", "major", f"{total} {noun}: {', '.join(parts)}.", "Describe the image's purpose, or mark it decorative.", occurrences=total))
 
-    # Ally did not flag a one-cell table without headers (probe X01), which
-    # looks like layout rather than data. Its exact cut-off is unknown.
-    cells = facts.table_cell_counts or [None] * len(facts.table_header_presence)
+    # Ally flagged a three-row table without headers (fixture 14) but not a
+    # one-cell table (probe X01) or a two-row table spread over three pages
+    # (probes Y01, Y02). Requiring three rows fits all three; whether row count
+    # or page spread is the real rule is being tested (batch ally-2026-10e).
+    rows = facts.table_row_counts or [None] * len(facts.table_header_presence)
     tables_missing_headers = sum(
-        not present and (count is None or count > 1)
-        for present, count in zip(facts.table_header_presence, cells)
+        not present and (count is None or count >= MIN_TABLE_ROWS)
+        for present, count in zip(facts.table_header_presence, rows)
     )
     if tables_missing_headers:
         noun = "tagged table" if tables_missing_headers == 1 else "tagged tables"
         verb = "has" if tables_missing_headers == 1 else "have"
-        out.append(_finding("TableHeaders:2", "Table is missing headers", "major", f"{tables_missing_headers} {noun} {verb} no TH cells.", "Identify row or column headers and set their scope.", occurrences=tables_missing_headers))
+        out.append(_finding("TableHeaders:2", "Table is missing headers", "major", f"{tables_missing_headers} {noun} {verb} no TH cells.", "Identify row or column headers and set their scope.", "medium", occurrences=tables_missing_headers))
 
     if facts.probable_low_contrast_text:
         ratio = facts.lowest_text_contrast
