@@ -104,10 +104,9 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
         noun = "Figure element" if total == 1 else "Figure elements"
         out.append(_finding("AlternativeText:2", "Images lack descriptions", "major", f"{total} {noun}: {', '.join(parts)}.", "Describe the image's purpose, or mark it decorative.", occurrences=total))
 
-    # Ally flagged a three-row table without headers (fixture 14) but not a
-    # one-cell table (probe X01) or a two-row table spread over three pages
-    # (probes Y01, Y02). Requiring three rows fits all three; whether row count
-    # or page spread is the real rule is being tested (batch ally-2026-10e).
+    # Ally flagged a three-row table without headers (fixture 14) but not the
+    # same table cut to two rows or one row (probes Z01, Z02), a one-cell
+    # table (X01) or a two-row table spread over three pages (Y01, Y02).
     rows = facts.table_row_counts or [None] * len(facts.table_header_presence)
     tables_missing_headers = sum(
         not present and (count is None or count >= MIN_TABLE_ROWS)
@@ -116,7 +115,7 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
     if tables_missing_headers:
         noun = "tagged table" if tables_missing_headers == 1 else "tagged tables"
         verb = "has" if tables_missing_headers == 1 else "have"
-        out.append(_finding("TableHeaders:2", "Table is missing headers", "major", f"{tables_missing_headers} {noun} {verb} no TH cells.", "Identify row or column headers and set their scope.", "medium", occurrences=tables_missing_headers))
+        out.append(_finding("TableHeaders:2", "Table is missing headers", "major", f"{tables_missing_headers} {noun} {verb} no TH cells.", "Identify row or column headers and set their scope.", occurrences=tables_missing_headers))
 
     if facts.probable_low_contrast_text:
         ratio = facts.lowest_text_contrast

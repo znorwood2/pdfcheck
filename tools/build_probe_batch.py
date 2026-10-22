@@ -703,7 +703,7 @@ def main(batch: str) -> None:
         facts = extract_facts(path)
         findings = run_canvas_checks(facts)
         codes = sorted(x.ally_code for x in findings if x.ally_code)
-        rows.append({**item, "codes": codes, "score": predict_score(findings, facts.page_count).score})
+        rows.append({**item, "codes": codes, "score": predict_score(findings, facts.text_page_count).score})
 
     if not results_path.exists():
         with results_path.open("w", newline="", encoding="utf-8") as handle:

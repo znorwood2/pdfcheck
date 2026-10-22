@@ -43,7 +43,7 @@ class ProbeResultTests(unittest.TestCase):
             with self.subTest(file=path.name):
                 facts = extract_facts(path)
                 findings = run_canvas_checks(facts)
-                prediction = predict_score(findings, facts.page_count)
+                prediction = predict_score(findings, facts.text_page_count)
                 self.assertScoreFits(int(row["ally_score"]), prediction)
                 recorded = issue_codes(row.get("ally_issue_codes", ""))
                 if recorded is not None:
@@ -53,7 +53,7 @@ class ProbeResultTests(unittest.TestCase):
                     (code,) = issue_codes(description)
                     remaining = [x for x in findings if x.ally_code != code]
                     with self.subTest(fixed=code):
-                        self.assertScoreFits(int(number.rstrip("%")), predict_score(remaining, facts.page_count))
+                        self.assertScoreFits(int(number.rstrip("%")), predict_score(remaining, facts.text_page_count))
 
     def assertScoreFits(self, observed, prediction):
         if prediction.confidence == "medium" or prediction.lower is None:

@@ -38,6 +38,14 @@ class DocumentFacts:
     page_largest_image_coverage: list[float] = field(default_factory=list)
 
     @property
+    def text_page_count(self) -> int:
+        """Pages that paint visible text; Ally's contrast penalty scales with
+        this, not total pages (probe Z03: two blank pages changed nothing)."""
+        if not self.page_visible_text_chars:
+            return self.page_count
+        return sum(1 for chars in self.page_visible_text_chars if chars > 0)
+
+    @property
     def probable_low_contrast_text(self) -> bool:
         return self.lowest_text_contrast is not None and self.lowest_text_contrast < 4.5
 

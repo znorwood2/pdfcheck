@@ -111,6 +111,10 @@ class FallbackScoreTests(unittest.TestCase):
         # HeadingsPresence + Contrast on three pages scored 37 (probe C10).
         self.assertEqual(37, estimate_score(["HeadingsPresence:2", "Contrast:2"], page_count=3))
 
+    def test_blank_pages_do_not_dilute_contrast(self):
+        facts = DocumentFacts(path=Path("p.pdf"), page_count=3, page_visible_text_chars=[500, 0, 0])
+        self.assertEqual(1, facts.text_page_count)
+
     def test_score_never_drops_below_floor(self):
         self.assertEqual(5, estimate_score(["AlternativeText:2", "Contrast:2"]))
 
