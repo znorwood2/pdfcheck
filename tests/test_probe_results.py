@@ -1,8 +1,9 @@
 """Ally observations recorded in probes/*/results.csv are regression tests.
 
 A medium-confidence prediction must equal Ally's score; a low-confidence one
-must at least contain it in its range. When the issue-code column is filled
-in, the predicted codes must match it too.
+must at least contain it in its range. When the issue column is filled in
+(codes or Ally's descriptions, see ally_issue_text.py), the predicted codes
+must match it too.
 """
 import csv
 from pathlib import Path
@@ -11,6 +12,11 @@ import unittest
 from pdfcheck.canvas import run_canvas_checks
 from pdfcheck.extract import extract_facts
 from pdfcheck.scoring import predict_score
+
+try:
+    from ally_issue_text import issue_codes
+except ImportError:  # run as a package module
+    from tests.ally_issue_text import issue_codes
 
 PROBES = Path(__file__).resolve().parents[1] / "probes"
 
@@ -38,9 +44,25 @@ class ProbeResultTests(unittest.TestCase):
                 else:
                     self.assertLessEqual(prediction.lower, observed)
                     self.assertGreaterEqual(prediction.upper, observed)
-                recorded = row.get("ally_issue_codes", "").replace(",", " ").split()
-                if recorded and recorded != ["none"]:
-                    self.assertEqual(set(recorded), {x.ally_code for x in findings if x.ally_code})
+                recorded = issue_codes(row.get("ally_issue_codes", ""))
+                if recorded is not None:
+                    self.assertEqual(recorded, {x.ally_code for x in findings if x.ally_code})
+
+
+class IssueTextTests(unittest.TestCase):
+    def test_descriptions_and_codes(self):
+        self.assertEqual({"Tagged:2", "Title:3"}, issue_codes("This PDF is untagged; This PDF does not have a title"))
+        self.assertEqual({"Tagged:2", "Title:3"}, issue_codes("Tagged:2 Title:3"))
+        self.assertEqual({"Scanned:1"}, issue_codes("The PDF is scanned"))
+        self.assertEqual({"LanguagePresence:3"}, issue_codes("This PDF does not have a language set"))
+        self.assertEqual({"LanguageCorrect:3"}, issue_codes("The language of the PDF is incorrect"))
+        self.assertEqual({"HeadingsPresence:2"}, issue_codes("This PDF does not have any headings"))
+        self.assertEqual({"HeadingsStartAtOne:3"}, issue_codes("The headings do not start at level 1"))
+        self.assertEqual({"AlternativeText:2"}, issue_codes("The image does not have a description"))
+        self.assertEqual(set(), issue_codes("none"))
+        self.assertIsNone(issue_codes(""))
+        with self.assertRaises(ValueError):
+            issue_codes("Something unexpected")
 
 
 if __name__ == "__main__":
