@@ -56,8 +56,8 @@ def _point_loss(code: str, page_count: int | None) -> float:
     loss = 100 - SINGLE_ISSUE_SCORES[code]
     if code == "Contrast:2" and page_count and page_count > 1:
         # Grey text cost 95 points on one-page files (C01-C05, C09), about 48
-        # on two pages whether one or both were grey (C07, C08), and fits a
-        # third on three pages (C10). Probe batch ally-2026-11 isolates it.
+        # on two pages (C07, C08) and 32-33 on three (X03, X04), however many
+        # of the pages were grey.
         loss /= page_count
     return loss
 

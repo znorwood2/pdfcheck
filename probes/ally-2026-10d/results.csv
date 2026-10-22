@@ -1,0 +1,6 @@
+file,priority,pdfcheck_codes,pdfcheck_score,ally_score,ally_issue_codes,ally_fix_scores,processed_date,notes
+Y01_no_headings_table_no_headers.pdf,1,HeadingsPresence:2 TableHeaders:2,37,,,,,
+Y02_h1_table_no_headers.pdf,1,TableHeaders:2,69,,,,,
+Y03_h1_table_with_headers.pdf,1,none,100,,,,,
+Y04_untagged_three_pages.pdf,1,Tagged:2,12,,,,,
+Y05_untagged_three_pages_grey.pdf,2,Contrast:2 Tagged:2,8,,,,,

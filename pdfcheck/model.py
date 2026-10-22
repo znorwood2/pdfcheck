@@ -28,6 +28,7 @@ class DocumentFacts:
     page_image_counts: list[int] = field(default_factory=list)
     page_image_errors: list[bool] = field(default_factory=list)
     table_header_presence: list[bool] = field(default_factory=list)
+    table_cell_counts: list[int] = field(default_factory=list)
     # Lowest WCAG contrast ratio of painted text against an assumed white page.
     lowest_text_contrast: float | None = None
     # Per page: approximate count of visibly painted characters, and the

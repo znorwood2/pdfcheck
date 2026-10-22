@@ -535,6 +535,101 @@ def _():
     return writer
 
 
+
+# ===========================================================================
+# Batch 4 (ally-2026-10d): a real two-by-two table, to test whether major
+# issues multiply, and whether Tagged and TableHeaders scale with page count.
+# ===========================================================================
+BATCH = "ally-2026-10d"
+
+
+def new_element(writer: PdfWriter, tag: str, parent_ref, kids) -> tuple:
+    element = DictionaryObject({NameObject("/Type"): NameObject("/StructElem"), NameObject("/S"): NameObject(tag),
+                                NameObject("/P"): parent_ref, NameObject("/K"): ArrayObject(kids)})
+    return element, writer._add_object(element)
+
+
+def document_units(writer: PdfWriter):
+    """06's top-level /text-unit elements, in reading order, and their parent."""
+    document = writer.root_object["/StructTreeRoot"].get_object()["/K"]
+    document = (document[0] if isinstance(document, list) else document).get_object()
+    return document, document["/K"]
+
+
+def heading_first_label(writer: PdfWriter) -> None:
+    _, units = document_units(writer)
+    text = units[0].get_object()["/K"]
+    text = (text[0] if isinstance(text, list) else text).get_object()
+    retag(text, "/H1")
+
+
+def two_by_two_table(writer: PdfWriter, header_row: bool) -> None:
+    """Move the /text of units 2-5 into a Table of two rows of two cells."""
+    document, units = document_units(writer)
+    document_ref = units[0].get_object()["/P"]
+    table, table_ref = new_element(writer, "/Table", document_ref, [])
+    for row_index, pair in enumerate(([units[1], units[2]], [units[3], units[4]])):
+        row, row_ref = new_element(writer, "/TR", table_ref, [])
+        for unit in pair:
+            text_ref = unit.get_object()["/K"]
+            text_ref = text_ref[0] if isinstance(text_ref, list) else text_ref
+            text = text_ref.get_object()
+            retag(text, "/TH" if header_row and row_index == 0 else "/TD")
+            text[NameObject("/P")] = row_ref
+            row["/K"].append(text_ref)
+        table["/K"].append(row_ref)
+    kept = ArrayObject([units[0], table_ref, units[5]])
+    document[NameObject("/K")] = kept
+
+
+@probe("Y01_no_headings_table_no_headers.pdf", "06_no_headings_3_pages.pdf", "Four paragraphs re-tagged as a 2x2 table without TH",
+       "HeadingsPresence:2 + TableHeaders:2. Multiplying predicts 37; subtracting predicts 23.", 1)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    two_by_two_table(writer, header_row=False)
+    return writer
+
+
+@probe("Y02_h1_table_no_headers.pdf", "06_no_headings_3_pages.pdf", "Y01 plus an H1, so the table is the only issue",
+       "TableHeaders:2 alone on three pages. 69 means no page scaling; about 90 means scaled like Contrast.", 1)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    heading_first_label(writer)
+    two_by_two_table(writer, header_row=False)
+    return writer
+
+
+@probe("Y03_h1_table_with_headers.pdf", "06_no_headings_3_pages.pdf", "Y02 with the first row as TH cells",
+       "Control: should score 100. Confirms Ally reads the constructed table.", 1)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    heading_first_label(writer)
+    two_by_two_table(writer, header_row=True)
+    return writer
+
+
+def untag(writer: PdfWriter) -> None:
+    for key in ("/StructTreeRoot", "/MarkInfo"):
+        writer.root_object.pop(NameObject(key), None)
+
+
+@probe("Y04_untagged_three_pages.pdf", "06_no_headings_3_pages.pdf", "Structure tree removed",
+       "Tagged:2 alone on three pages. 12 means no page scaling.", 1)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    untag(writer)
+    return writer
+
+
+@probe("Y05_untagged_three_pages_grey.pdf", "06_no_headings_3_pages.pdf", "Structure tree removed, all text #AAAAAA",
+       "Tagged:2 + Contrast:2 on three pages. Multiplying predicts 8; subtracting hits the floor of 5.", 2)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    untag(writer)
+    recolour_text(writer, 0xAA / 255)
+    return writer
+
+
 def main(batch: str) -> None:
     probes = [p for p in PROBES if p["batch"] == batch]
     if not probes:
@@ -559,10 +654,10 @@ def main(batch: str) -> None:
         with results_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["file", "priority", "pdfcheck_codes", "pdfcheck_score",
-                             "ally_score", "ally_issue_codes", "processed_date", "notes"])
+                             "ally_score", "ally_issue_codes", "ally_fix_scores", "processed_date", "notes"])
             for row in rows:
                 writer.writerow([row["file"], row["priority"], " ".join(row["codes"]) or "none",
-                                 "" if row["score"] is None else row["score"], "", "", "", ""])
+                                 "" if row["score"] is None else row["score"], "", "", "", "", ""])
 
     lines = [
         f"# Ally probe batch {batch}",
@@ -570,7 +665,9 @@ def main(batch: str) -> None:
         "Generated by `tools/build_probe_batch.py`. Each file is a copy of a fixture",
         "that Ally already scored, with exactly one change. Upload them to a Canvas course, wait for",
         "Ally to process them, then fill in `results.csv` with the score and **every** issue shown.",
-        "Paste Ally's issue descriptions separated by `;`, or write `none`.",
+        "Paste Ally's issue descriptions separated by `;`, or write `none`. In `ally_fix_scores`,",
+        "record the \"Increase score up to N%\" figure under each issue, for example",
+        "`This PDF is untagged 93; This PDF does not have a title 7`.",
         "",
         "Priority 1 files answer the questions that most limit pdfcheck's accuracy; priority 2 can wait.",
         "",

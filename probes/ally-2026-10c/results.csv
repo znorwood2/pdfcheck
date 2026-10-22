@@ -1,8 +1,8 @@
-file,priority,pdfcheck_codes,pdfcheck_score,ally_score,ally_issue_codes,processed_date,notes
-X01_no_alt_and_table_no_headers.pdf,1,AlternativeText:2 TableHeaders:2,37,54,This PDF contains images without description,,
-X02_three_pages_with_h1.pdf,1,none,100,100,none,,
-X03_three_pages_with_h1_grey.pdf,1,Contrast:2,68,67,This PDF contains text with insufficient contrast,,
-X04_three_pages_with_h1_page1_grey.pdf,2,Contrast:2,68,68,This PDF contains text with insufficient contrast,,
-S06_jpeg_scan_at_58pct.pdf,1,LanguagePresence:3 Tagged:2 Title:3,6,5,This PDF is untagged : This PDF does not have a language set : This PDF does not have a title,,
-S07_fixture15_with_jpeg_image.pdf,1,LanguagePresence:3 Tagged:2 Title:3,6,6,This PDF is untagged : This PDF does not have a language set : This PDF does not have a title,,
-S08_tagged_handout_big_figure.pdf,1,Scanned:1,0,100,none,,
+file,priority,pdfcheck_codes,pdfcheck_score,ally_score,ally_issue_codes,ally_fix_scores,processed_date,notes
+X01_no_alt_and_table_no_headers.pdf,1,AlternativeText:2 TableHeaders:2,37,54,This PDF contains images without description,,,
+X02_three_pages_with_h1.pdf,1,none,100,100,none,,,
+X03_three_pages_with_h1_grey.pdf,1,Contrast:2,68,67,This PDF contains text with insufficient contrast,,,
+X04_three_pages_with_h1_page1_grey.pdf,2,Contrast:2,68,68,This PDF contains text with insufficient contrast,,,
+S06_jpeg_scan_at_58pct.pdf,1,LanguagePresence:3 Tagged:2 Title:3,6,5,This PDF is untagged : This PDF does not have a language set : This PDF does not have a title,This PDF is untagged 93; This PDF does not have a language set 10; This PDF does not have a title 7,,
+S07_fixture15_with_jpeg_image.pdf,1,LanguagePresence:3 Tagged:2 Title:3,6,6,This PDF is untagged : This PDF does not have a language set : This PDF does not have a title,This PDF is untagged 94; This PDF does not have a language set 11; This PDF does not have a title 7,,
+S08_tagged_handout_big_figure.pdf,1,Scanned:1,0,100,none,,,

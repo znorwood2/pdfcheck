@@ -4,10 +4,10 @@ from .language import detect_language, is_valid_language_tag, primary_subtag
 from .model import DocumentFacts, Finding
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".svg", ".webp", ".eps", ".pdf")
-# Ally scored image PDFs 0 when the image covered 70%, 80% or 100% of the page,
-# even with an invisible OCR layer or a visible footer line (probes S01-S05).
-# It did not flag fixture 15, whose image covered 58%, but that file also
-# differs in image encoding and producer; batch ally-2026-11 separates these.
+# Ally scored untagged image PDFs 0 when the image covered 70%, 80% or 100% of
+# the page, even with an invisible OCR layer or a visible footer line (probes
+# S01-S05). Images covering 58% were not flagged, whether PNG or JPEG (fixture
+# 15, probes S06 and S07), so the cut-off lies between 58% and 70%.
 SCAN_IMAGE_COVERAGE = 0.65
 # A page with more visible text than this is not treated as a scan.
 SCAN_MAX_VISIBLE_CHARS = 200
@@ -18,6 +18,10 @@ def alt_is_filename(alt: str) -> bool:
 
 
 def _looks_scanned(facts: DocumentFacts) -> bool:
+    # A tagged handout whose figure covered 85% of the page was not flagged
+    # (probe S08), so only untagged files are treated as possible scans.
+    if facts.tagged and facts.structure:
+        return False
     pages = list(zip(facts.page_largest_image_coverage, facts.page_visible_text_chars))
     return bool(pages) and all(cover >= SCAN_IMAGE_COVERAGE and text <= SCAN_MAX_VISIBLE_CHARS for cover, text in pages)
 
@@ -99,7 +103,13 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
         noun = "Figure element" if total == 1 else "Figure elements"
         out.append(_finding("AlternativeText:2", "Images lack descriptions", "major", f"{total} {noun}: {', '.join(parts)}.", "Describe the image's purpose, or mark it decorative.", occurrences=total))
 
-    tables_missing_headers = sum(not present for present in facts.table_header_presence)
+    # Ally did not flag a one-cell table without headers (probe X01), which
+    # looks like layout rather than data. Its exact cut-off is unknown.
+    cells = facts.table_cell_counts or [None] * len(facts.table_header_presence)
+    tables_missing_headers = sum(
+        not present and (count is None or count > 1)
+        for present, count in zip(facts.table_header_presence, cells)
+    )
     if tables_missing_headers:
         noun = "tagged table" if tables_missing_headers == 1 else "tagged tables"
         verb = "has" if tables_missing_headers == 1 else "have"

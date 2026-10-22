@@ -53,6 +53,7 @@ def issue_codes(cell: str) -> set[str] | None:
         return None
     if cell.lower() in {"none", "no issues"}:
         return set()
+    cell = re.sub(r"\s+[:|]\s+", ";", cell)
     parts = cell.split(";") if ";" in cell else (cell.replace(",", " ").split() if all(_CODE.match(x) for x in cell.replace(",", " ").split()) else [cell])
     codes = set()
     for part in (p.strip() for p in parts if p.strip()):
