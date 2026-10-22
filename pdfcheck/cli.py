@@ -18,7 +18,7 @@ def build_report(path: Path, mode: str) -> Report:
     facts = extract_facts(path)
     canvas = run_canvas_checks(facts)
     if mode == "canvas":
-        return Report(path, mode, canvas, predict_score(canvas))
+        return Report(path, mode, canvas, predict_score(canvas, facts.page_count))
     if not facts.parsable or facts.encrypted:
         return Report(path, mode, canvas, None, [], ["Broader checks were not run because the PDF could not be read safely."])
     full, manual, skipped = run_full_checks(facts)

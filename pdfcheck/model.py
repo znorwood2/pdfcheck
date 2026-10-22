@@ -30,6 +30,10 @@ class DocumentFacts:
     table_header_presence: list[bool] = field(default_factory=list)
     # Lowest WCAG contrast ratio of painted text against an assumed white page.
     lowest_text_contrast: float | None = None
+    # Per page: text-showing operators that paint visible glyphs, and the
+    # largest fraction of the page covered by a single image.
+    page_visible_text_ops: list[int] = field(default_factory=list)
+    page_largest_image_coverage: list[float] = field(default_factory=list)
 
     @property
     def probable_low_contrast_text(self) -> bool:

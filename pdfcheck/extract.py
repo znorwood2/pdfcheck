@@ -128,16 +128,44 @@ def _contrast_against_white(rgb: tuple[float, float, float], alpha: float) -> fl
 _TEXT_SHOWING = {"Tj", "TJ", "'", '"'}
 
 
-def _scan_text_contrast(stream_owner: Any, resources: Any, reader: PdfReader, depth: int, seen: set[int]) -> float | None:
-    """Return the lowest contrast ratio of visible text against an assumed white page."""
+def _multiply(a: list[float], b: list[float]) -> list[float]:
+    """Product of two PDF affine matrices [a b c d e f] (a applied first)."""
+    return [
+        a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3],
+        a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3],
+        a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5],
+    ]
+
+
+def _unit_square_bbox(ctm: list[float]) -> tuple[float, float, float, float]:
+    points = [(ctm[4] + x * ctm[0] + y * ctm[2], ctm[5] + x * ctm[1] + y * ctm[3]) for x, y in ((0, 0), (1, 0), (0, 1), (1, 1))]
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+class _PageScan:
+    """What one pass over a page's content found."""
+
+    def __init__(self) -> None:
+        self.lowest_contrast: float | None = None
+        self.visible_text_ops = 0
+        self.image_boxes: list[tuple[float, float, float, float]] = []
+
+    def text(self, ratio: float | None) -> None:
+        self.visible_text_ops += 1
+        if ratio is not None:
+            self.lowest_contrast = ratio if self.lowest_contrast is None else min(self.lowest_contrast, ratio)
+
+
+def _scan_content(stream_owner: Any, resources: Any, reader: PdfReader, scan: _PageScan,
+                  ctm: list[float], depth: int, seen: set[int]) -> None:
     try:
         stream = ContentStream(stream_owner, reader)
     except Exception:
-        return None
-    worst: float | None = None
-    # State: fill rgb (None = unknown colour), fill colour-space components,
-    # fill alpha, text render mode.
-    state: dict[str, Any] = {"rgb": (0.0, 0.0, 0.0), "space": 1, "alpha": 1.0, "mode": 0}
+        return
+    # Fill rgb (None = unknown colour), fill colour-space components, fill
+    # alpha, text render mode, and current transformation matrix.
+    state: dict[str, Any] = {"rgb": (0.0, 0.0, 0.0), "space": 1, "alpha": 1.0, "mode": 0, "ctm": ctm}
     stack: list[dict[str, Any]] = []
     for operands, operator in stream.operations:
         op = operator.decode("latin-1") if isinstance(operator, bytes) else str(operator)
@@ -146,6 +174,8 @@ def _scan_text_contrast(stream_owner: Any, resources: Any, reader: PdfReader, de
                 stack.append(dict(state))
             elif op == "Q" and stack:
                 state = stack.pop()
+            elif op == "cm":
+                state["ctm"] = _multiply([float(x) for x in operands[:6]], state["ctm"])
             elif op == "g":
                 state["rgb"], state["space"] = _rgb_from_components([float(operands[0])]), 1
             elif op == "rg":
@@ -171,47 +201,72 @@ def _scan_text_contrast(stream_owner: Any, resources: Any, reader: PdfReader, de
             elif op in _TEXT_SHOWING:
                 # Modes 3 (invisible) and 7 (clip only) paint nothing; modes 1
                 # and 5 stroke rather than fill, which this check does not model.
-                if state["mode"] in {0, 2, 4, 6} and state["rgb"] is not None:
-                    ratio = _contrast_against_white(state["rgb"], state["alpha"])
-                    worst = ratio if worst is None else min(worst, ratio)
-            elif op == "Do" and depth < 8:
+                if state["mode"] in {0, 2, 4, 6}:
+                    rgb = state["rgb"]
+                    scan.text(None if rgb is None else _contrast_against_white(rgb, state["alpha"]))
+                elif state["mode"] in {1, 5}:
+                    scan.text(None)
+            elif op == "BI":
+                scan.image_boxes.append(_unit_square_bbox(state["ctm"]))
+            elif op == "Do":
                 xobject = resources.get("/XObject").get_object().get(_name(operands[0]))
                 key = getattr(xobject, "idnum", None)
                 xobject = xobject.get_object()
-                if _name(xobject.get("/Subtype")) != "/Form" or (key is not None and key in seen):
+                subtype = _name(xobject.get("/Subtype"))
+                if subtype == "/Image":
+                    scan.image_boxes.append(_unit_square_bbox(state["ctm"]))
+                    continue
+                if subtype != "/Form" or depth >= 8 or (key is not None and key in seen):
                     continue
                 if key is not None:
                     seen.add(key)
                 inner_resources = xobject.get("/Resources")
                 inner_resources = inner_resources.get_object() if inner_resources is not None else resources
-                ratio = _scan_text_contrast(xobject, inner_resources, reader, depth + 1, seen)
-                if ratio is not None:
-                    worst = ratio if worst is None else min(worst, ratio)
+                matrix = [float(x) for x in xobject.get("/Matrix", [1, 0, 0, 1, 0, 0])]
+                _scan_content(xobject, inner_resources, reader, scan, _multiply(matrix, state["ctm"]), depth + 1, seen)
         except (TypeError, ValueError, IndexError, AttributeError, KeyError):
             continue
-    return worst
 
 
-def _lowest_text_contrast(reader: PdfReader) -> float | None:
-    """Lowest WCAG contrast of painted text, assuming a white background.
+def _largest_image_coverage(boxes: list[tuple[float, float, float, float]], page_box: Any) -> float:
+    """Largest fraction of the page area covered by any single image."""
+    try:
+        left, bottom, right, top = (float(x) for x in page_box)
+    except Exception:
+        return 0.0
+    area = (right - left) * (top - bottom)
+    if area <= 0:
+        return 0.0
+    best = 0.0
+    for x0, y0, x1, y1 in boxes:
+        width = max(0.0, min(x1, right) - max(x0, left))
+        height = max(0.0, min(y1, top) - max(y0, bottom))
+        best = max(best, width * height / area)
+    return best
 
-    This is an operator-level heuristic: it does not see the real background,
-    so white text on a dark box is a false positive. Rendered analysis is a TODO.
+
+def _scan_pages(reader: PdfReader, facts: DocumentFacts) -> None:
+    """Text colour and image placement, from content-stream operators.
+
+    Contrast assumes a white page: this does not see the real background, so
+    white text on a dark box is a false positive. Rendered analysis is a TODO.
     """
     worst: float | None = None
     for page in reader.pages:
+        scan = _PageScan()
         try:
             resources = page.get("/Resources")
             resources = resources.get_object() if resources is not None else {}
             contents = page.get_contents()
+            if contents is not None:
+                _scan_content(contents, resources, reader, scan, [1, 0, 0, 1, 0, 0], 0, set())
         except Exception:
-            continue
-        if contents is None:
-            continue
-        ratio = _scan_text_contrast(contents, resources, reader, 0, set())
-        if ratio is not None:
-            worst = ratio if worst is None else min(worst, ratio)
-    return worst
+            pass
+        facts.page_visible_text_ops.append(scan.visible_text_ops)
+        facts.page_largest_image_coverage.append(_largest_image_coverage(scan.image_boxes, page.mediabox))
+        if scan.lowest_contrast is not None:
+            worst = scan.lowest_contrast if worst is None else min(worst, scan.lowest_contrast)
+    facts.lowest_text_contrast = worst
 
 
 def extract_facts(path: str | Path, password: str | None = None) -> DocumentFacts:
@@ -259,7 +314,7 @@ def extract_facts(path: str | Path, password: str | None = None) -> DocumentFact
             except Exception:
                 facts.page_image_counts.append(0)
                 facts.page_image_errors.append(True)
-        facts.lowest_text_contrast = _lowest_text_contrast(reader)
+        _scan_pages(reader, facts)
     except Exception as exc:
         facts.parsable = False
         facts.parse_error = f"{type(exc).__name__}: {exc}"

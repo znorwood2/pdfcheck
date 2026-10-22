@@ -1,11 +1,14 @@
-"""Build the October 2026 Ally probe batch from the calibrated September corpus.
+"""Build Ally probe batches from the calibrated September corpus.
 
 Each probe copies a fixture Ally has already scored and changes exactly one
 property with pypdf, so no LaTeX installation is needed. Upload the output to
 Canvas, record Ally's result in results.csv, and the observations can then be
 promoted into tests/fixtures with a regression test.
 
-    python tools/build_probe_batch.py
+    python tools/build_probe_batch.py            # newest batch
+    python tools/build_probe_batch.py ally-2026-10
+
+An existing results.csv is never overwritten.
 """
 from __future__ import annotations
 
@@ -25,10 +28,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from pdfcheck.canvas import run_canvas_checks  # noqa: E402
 from pdfcheck.extract import extract_facts  # noqa: E402
-from pdfcheck.scoring import SINGLE_ISSUE_SCORES, _additive_estimate, _multiplicative_estimate, predict_score  # noqa: E402
+from pdfcheck.scoring import predict_score  # noqa: E402
 
 CORPUS = ROOT / "tests" / "fixtures" / "ally-2026-09"
-OUT = ROOT / "probes" / "ally-2026-10"
+PROBE_ROOT = ROOT / "probes"
+BATCH = "ally-2026-10"
 
 
 def load(name: str) -> PdfWriter:
@@ -37,8 +41,8 @@ def load(name: str) -> PdfWriter:
     return writer
 
 
-def save(writer: PdfWriter, name: str) -> None:
-    with (OUT / name).open("wb") as handle:
+def save(writer: PdfWriter, path: Path) -> None:
+    with path.open("wb") as handle:
         writer.write(handle)
 
 
@@ -105,7 +109,7 @@ PROBES: list[dict] = []
 def probe(name: str, base: str, change: str, question: str, priority: int):
     def register(build):
         PROBES.append({"file": name, "base": base, "change": change, "question": question,
-                       "priority": priority, "build": build})
+                       "priority": priority, "build": build, "batch": BATCH})
         return build
     return register
 
@@ -282,49 +286,181 @@ def _():
     return scanner_style_pdf(with_ocr=True)
 
 
-def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for item in PROBES:
-        save(item["build"](), item["file"])
-        findings = run_canvas_checks(extract_facts(OUT / item["file"]))
-        codes = sorted(x.ally_code for x in findings if x.ally_code)
-        score = predict_score(findings)
-        known = [c for c in codes if c in SINGLE_ISSUE_SCORES]
-        alt = ""
-        if len(known) > 1:
-            alt = f"subtract {_additive_estimate(known)} / multiply {_multiplicative_estimate(known)}"
-        rows.append({**item, "codes": codes, "score": score.score, "alt": alt})
 
-    with (OUT / "results.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["file", "priority", "pdfcheck_codes", "pdfcheck_score",
-                         "ally_score", "ally_issue_codes", "processed_date", "notes"])
-        for row in rows:
-            writer.writerow([row["file"], row["priority"], " ".join(row["codes"]) or "none",
-                             "" if row["score"] is None else row["score"], "", "", "", ""])
+# ===========================================================================
+# Batch 2 (ally-2026-10b): follow-ups to the October 2026 results.
+# ===========================================================================
+BATCH = "ally-2026-10b"
+
+
+def keep_first_page(writer: PdfWriter) -> None:
+    """Drop page 2+ and prune tag-tree content that pointed at them."""
+    first = writer.pages[0].indirect_reference
+    while len(writer.pages) > 1:
+        writer.remove_page(len(writer.pages) - 1)
+
+    def on_first_page(node, inherited):
+        page = node.get("/Pg", inherited) if hasattr(node, "get") else inherited
+        return page is None or page.idnum == first.idnum, page
+
+    def prune(node, inherited=None):
+        _, page = on_first_page(node, inherited)
+        kids = node.get("/K")
+        if kids is None:
+            return
+        listed = kids if isinstance(kids, list) else [kids]
+        kept = ArrayObject()
+        for kid in listed:
+            obj = kid.get_object() if hasattr(kid, "get_object") else kid
+            if hasattr(obj, "get"):
+                keep, child_page = on_first_page(obj, page)
+                if "/S" in obj:
+                    prune(obj, child_page)
+                    if not keep and not obj.get("/K"):
+                        continue
+                elif not keep:
+                    continue
+            elif page is not None and page.idnum != first.idnum:
+                continue  # bare MCID on a removed page
+            kept.append(kid)
+        node[NameObject("/K")] = kept
+
+    prune(writer.root_object["/StructTreeRoot"].get_object())
+    writer.root_object["/StructTreeRoot"].get_object().pop(NameObject("/ParentTree"), None)
+
+
+@probe("C09_one_long_page_grey.pdf", "05_no_headings_2_pages.pdf", "C08 cut to its first page (same text per page), all #AAAAAA",
+       "Does the Contrast penalty depend on page count (expect 5) or on the document itself (expect about 50)?", 1)
+def _():
+    writer = load("05_no_headings_2_pages.pdf")
+    keep_first_page(writer)
+    recolour_text(writer, 0xAA / 255)
+    return writer
+
+
+@probe("C10_three_pages_grey.pdf", "06_no_headings_3_pages.pdf", "All text #AAAAAA",
+       "HeadingsPresence:2 + Contrast:2 on three pages. Dividing the contrast loss by page count predicts 22.", 1)
+def _():
+    writer = load("06_no_headings_3_pages.pdf")
+    recolour_text(writer, 0xAA / 255)
+    return writer
+
+
+def scaled_scan(area: float, visible_line: bool = False) -> PdfWriter:
+    writer = scanner_style_pdf(with_ocr=False)
+    page = writer.pages[0]
+    w, h = float(page.mediabox.width), float(page.mediabox.height)
+    k = area ** 0.5
+    data = (f"q {w * k:.3f} 0 0 {h * k:.3f} {w * (1 - k) / 2:.3f} {h * (1 - k) / 2:.3f} cm /image Do Q\n").encode()
+    if visible_line:
+        font = DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"), NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
+        })
+        page["/Resources"].get_object()[NameObject("/Font")] = DictionaryObject({NameObject("/F1"): writer._add_object(font)})
+        data += b"BT 0 g /F1 9 Tf 36 20 Td (Course handout - page 1) Tj ET\n"
+    set_content(writer, 0, data)
+    return writer
+
+
+for _prefix, _area, _pri in [("S03", 0.8, 1), ("S04", 0.7, 2)]:
+    probe(f"{_prefix}_scan_{round(_area * 100)}pct_of_page.pdf", "S01_scanner_style_image.pdf",
+          f"Page image scaled to cover {round(_area * 100)}% of the page",
+          "Where between 58% (fixture 15, not scanned) and 100% (S01, scored 0) does Scanned start?", _pri)(
+        lambda area=_area: scaled_scan(area))
+
+
+@probe("S05_scan_with_visible_footer.pdf", "S01_scanner_style_image.pdf", "Full-page image plus one visible black line of real text",
+       "Does a little visible text stop a page counting as scanned? pdfcheck says yes.", 1)
+def _():
+    return scaled_scan(1.0, visible_line=True)
+
+
+def set_figure_alt(writer: PdfWriter, alt: str) -> None:
+    for element in struct_elements(writer):
+        if element.get("/S") == "/Figure":
+            element[NameObject("/Alt")] = TextStringObject(alt)
+
+
+@probe("F02_alt_filename_no_extension.pdf", "11_figure_with_alt.pdf", "Figure /Alt = 'test-figure' (no extension)",
+       "Is the filename rule about the extension, or about matching the image name?", 1)
+def _():
+    writer = load("11_figure_with_alt.pdf")
+    set_figure_alt(writer, "test-figure")
+    return writer
+
+
+@probe("F03_alt_generic_word.pdf", "11_figure_with_alt.pdf", "Figure /Alt = 'image'",
+       "Does Ally reject generic placeholder alt text?", 2)
+def _():
+    writer = load("11_figure_with_alt.pdf")
+    set_figure_alt(writer, "image")
+    return writer
+
+
+@probe("L01_language_spanish_on_english.pdf", "05_no_headings_2_pages.pdf", "/Lang es-ES on English text",
+       "Confirms M03 was a language-mismatch issue rather than something French-specific.", 2)
+def _():
+    writer = load("05_no_headings_2_pages.pdf")
+    set_lang(writer, "es-ES")
+    return writer
+
+
+def main(batch: str) -> None:
+    probes = [p for p in PROBES if p["batch"] == batch]
+    if not probes:
+        raise SystemExit(f"unknown batch {batch!r}; choose from {sorted({p['batch'] for p in PROBES})}")
+    out = PROBE_ROOT / batch
+    out.mkdir(parents=True, exist_ok=True)
+    results_path = out / "results.csv"
+    observed = {}
+    if results_path.exists():
+        with results_path.open(newline="", encoding="utf-8") as handle:
+            observed = {row["file"]: row for row in csv.DictReader(handle)}
+    rows = []
+    for item in probes:
+        path = out / item["file"]
+        save(item["build"](), path)
+        facts = extract_facts(path)
+        findings = run_canvas_checks(facts)
+        codes = sorted(x.ally_code for x in findings if x.ally_code)
+        rows.append({**item, "codes": codes, "score": predict_score(findings, facts.page_count).score})
+
+    if not results_path.exists():
+        with results_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["file", "priority", "pdfcheck_codes", "pdfcheck_score",
+                             "ally_score", "ally_issue_codes", "processed_date", "notes"])
+            for row in rows:
+                writer.writerow([row["file"], row["priority"], " ".join(row["codes"]) or "none",
+                                 "" if row["score"] is None else row["score"], "", "", "", ""])
 
     lines = [
-        "# Ally probe batch, October 2026",
+        f"# Ally probe batch {batch}",
         "",
-        "Generated by `tools/build_probe_batch.py`. Each file is a copy of a September 2026 fixture",
+        "Generated by `tools/build_probe_batch.py`. Each file is a copy of a fixture",
         "that Ally already scored, with exactly one change. Upload them to a Canvas course, wait for",
-        "Ally to process them, then fill in `results.csv` with the score and **every** issue shown.",
+        "Ally to process them, then fill in `results.csv` with the score and **every** issue shown",
+        "(for example `Tagged:2 Title:3`, or the issue names as Ally displays them).",
         "",
         "Priority 1 files answer the questions that most limit pdfcheck's accuracy; priority 2 can wait.",
         "",
-        "| File | Pri | Based on | Change | Question | pdfcheck predicts |",
-        "|---|---:|---|---|---|---|",
+        "| File | Pri | Based on | Change | Question | pdfcheck predicts | Ally observed |",
+        "|---|---:|---|---|---|---|---|",
     ]
     for row in sorted(rows, key=lambda r: (r["priority"], r["file"])):
         prediction = ", ".join(row["codes"]) or "no issues"
         if row["score"] is not None:
             prediction += f"; score {row['score']}"
+        seen = observed.get(row["file"], {})
+        ally = seen.get("ally_score", "").strip()
+        if ally and seen.get("ally_issue_codes", "").strip():
+            ally += f" ({seen['ally_issue_codes'].strip()})"
         lines.append(f"| `{row['file']}` | {row['priority']} | `{row['base']}` | {row['change']} | "
-                     f"{row['question']} | {prediction} |")
-    (OUT / "PROBES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"Built {len(rows)} probes in {OUT}")
+                     f"{row['question']} | {prediction} | {ally or 'pending'} |")
+    (out / "PROBES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Built {len(rows)} probes in {out}")
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1] if len(sys.argv) > 1 else PROBES[-1]["batch"])

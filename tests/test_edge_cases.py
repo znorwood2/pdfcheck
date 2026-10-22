@@ -79,6 +79,41 @@ class EdgeCaseTests(unittest.TestCase):
         self.assertEqual(["Security:1"], [x.ally_code for x in report.findings])
         self.assertEqual([], report.manual_checks)
 
+    def test_empty_structure_tree_is_untagged(self):
+        facts = DocumentFacts(path=Path("empty.pdf"), tagged=True, title="Title", language="en")
+        self.assertIn("Tagged:2", {x.ally_code for x in run_canvas_checks(facts)})
+
+    def test_filename_alt_text_counts_as_missing(self):
+        facts = DocumentFacts(path=Path("f.pdf"), tagged=True, title="Title", language="en")
+        facts.structure = [StructureElement("/Figure", "/Figure", "IMG_0042.JPG"), StructureElement("/Figure", "/Figure", "A cat")]
+        finding = next(x for x in run_canvas_checks(facts) if x.ally_code == "AlternativeText:2")
+        self.assertEqual(1, finding.occurrences)
+
+    def test_language_mismatch_and_invalid_code(self):
+        english = "The purpose of this handout is to show that the text is in English and that it was written for the class. " * 3
+        for lang, expected in [("fr-FR", True), ("english", True), ("en-GB", False), ("EN", False)]:
+            facts = DocumentFacts(path=Path("l.pdf"), tagged=True, title="T", language=lang, page_text=[english])
+            facts.structure = [StructureElement("/P", "/P")]
+            codes = {x.ally_code for x in run_canvas_checks(facts)}
+            self.assertEqual(expected, "LanguageCorrect:3" in codes, lang)
+
+    def test_short_text_does_not_trigger_language_guess(self):
+        facts = DocumentFacts(path=Path("l.pdf"), tagged=True, title="T", language="de", page_text=["Name: Date:"])
+        facts.structure = [StructureElement("/P", "/P")]
+        self.assertNotIn("LanguageCorrect:3", {x.ally_code for x in run_canvas_checks(facts)})
+
+    def test_full_page_image_without_visible_text_is_scanned(self):
+        def codes(coverage, text_ops):
+            facts = DocumentFacts(path=Path("s.pdf"), page_count=1, page_largest_image_coverage=[coverage], page_visible_text_ops=[text_ops])
+            return {x.ally_code for x in run_canvas_checks(facts)}
+        self.assertIn("Scanned:1", codes(1.0, 0))
+        self.assertNotIn("Scanned:1", codes(0.58, 0))  # fixture 15 was not flagged
+        self.assertNotIn("Scanned:1", codes(1.0, 5))   # visible text over a background image
+
+    def test_scanned_scores_zero(self):
+        finding = Finding("canvas.scanned:1", "Scanned", "severe", "low", "m", "s", "Scanned:1")
+        self.assertEqual(0, predict_score([finding]).score)
+
 
 if __name__ == "__main__":
     unittest.main()

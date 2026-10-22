@@ -48,11 +48,6 @@ def run_full_checks(facts: DocumentFacts) -> tuple[list[Finding], list[str], lis
         filename = facts.path.stem
         if title.casefold() == filename.casefold() or title.lower().endswith(".pdf") or title.endswith("."):
             findings.append(Finding("full.title-quality", "Document title may not be meaningful", "minor", "high", f"Title is {title!r}.", "Use a human-readable title distinct from the filename."))
-    for item in facts.structure:
-        if item.resolved_tag == "/Figure" and item.alt:
-            alt = str(item.alt).strip()
-            if alt.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff")):
-                findings.append(Finding("full.alt-filename", "Figure uses a filename as alternative text", "major", "high", f"Alternative text is {alt!r}.", "Describe the figure's purpose or mark it decorative."))
     if facts.page_count >= 10:
         manual.append("Confirm that bookmarks provide useful navigation for this long document.")
     manual.append("Verify that the tag-tree reading order matches the intended visual reading order.")

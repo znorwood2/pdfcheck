@@ -36,7 +36,7 @@ class CanvasCorpusTests(unittest.TestCase):
                 findings = run_canvas_checks(facts)
                 codes = {x.ally_code for x in findings if x.ally_code}
                 self.assertEqual(expected_codes, codes)
-                prediction = predict_score(findings)
+                prediction = predict_score(findings, facts.page_count)
                 self.assertEqual(expected_score, prediction.score)
                 self.assertEqual("medium", prediction.confidence)
 

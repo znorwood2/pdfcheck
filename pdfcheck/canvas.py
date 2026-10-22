@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+from .language import detect_language, is_valid_language_tag, primary_subtag
 from .model import DocumentFacts, Finding
+
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".svg", ".webp", ".eps", ".pdf")
+# Ally scored a full-page image PDF 0 (probes S01/S02, October 2026) but did not
+# flag a LaTeX page whose image covered 58% of the page (fixture 15).
+SCAN_IMAGE_COVERAGE = 0.9
+
+
+def alt_is_filename(alt: str) -> bool:
+    return alt.strip().lower().endswith(IMAGE_EXTENSIONS)
+
+
+def _looks_scanned(facts: DocumentFacts) -> bool:
+    pages = list(zip(facts.page_largest_image_coverage, facts.page_visible_text_ops))
+    return bool(pages) and all(cover >= SCAN_IMAGE_COVERAGE and text == 0 for cover, text in pages)
 
 
 def _finding(
@@ -20,12 +35,37 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
         return [_finding("Parsable:1", "PDF is malformed", "severe", facts.parse_error or "The PDF could not be parsed.", "Re-export or repair the PDF.")]
     if facts.encrypted:
         return [_finding("Security:1", "PDF is encrypted", "severe", "The PDF requires a password or restricts access.", "Provide an unencrypted PDF.")]
+    if _looks_scanned(facts):
+        out.append(_finding(
+            "Scanned:1", "PDF appears to be scanned", "severe",
+            "Every page is a near-full-page image with no visible text.",
+            "Provide the original digital document, or run OCR and then tag the result.", "low",
+        ))
     if not facts.tagged:
         out.append(_finding("Tagged:2", "PDF is untagged", "major", "No structure tree is present.", "Export a tagged PDF and verify its reading order."))
+    elif not facts.structure:
+        # Ally treats an empty tag tree as untagged (probe T02, October 2026).
+        out.append(_finding("Tagged:2", "PDF is untagged", "major", "The structure tree contains no elements.", "Export a tagged PDF and verify its reading order."))
     if not facts.title or not str(facts.title).strip():
         out.append(_finding("Title:3", "PDF does not have a title", "minor", "Document title metadata is empty.", "Set a concise, meaningful document title."))
     if not facts.language or not str(facts.language).strip():
         out.append(_finding("LanguagePresence:3", "PDF does not have a language set", "minor", "The document catalog has no language.", "Set the primary document language."))
+    elif not is_valid_language_tag(facts.language):
+        # Ally deducted 5 points for /Lang "english" (probe M04); which code it
+        # displays has not been recorded yet.
+        out.append(_finding(
+            "LanguageCorrect:3", "PDF language is not a valid code", "minor",
+            f"The language {facts.language!r} is not a language code such as 'en-US'.",
+            "Set the language with a standard code, for example en-US.", "low",
+        ))
+    else:
+        detected = detect_language(" ".join(facts.page_text))
+        if detected and detected != primary_subtag(facts.language):
+            out.append(_finding(
+                "LanguageCorrect:3", "PDF language may be incorrect", "minor",
+                f"The language is set to {facts.language!r}, but the text appears to be {detected!r}.",
+                "Set the language that matches the document's main text.", "low",
+            ))
 
     headings = facts.raw_heading_levels
     if facts.tagged and facts.page_count >= 3 and not headings:
@@ -41,11 +81,19 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
             out.append(_finding("HeadingsSequential:3", "Headings are not sequential", "minor", f"Heading sequence is {headings}.", "Do not skip heading levels."))
 
     figures = [x for x in facts.structure if x.resolved_tag == "/Figure"]
+    # Ally rejects a filename as alt text (probe F01), which is what LaTeX
+    # inserts when no alt text is given.
     missing_alt = sum(x.alt is None or not str(x.alt).strip() for x in figures)
-    if missing_alt:
-        noun = "Figure element" if missing_alt == 1 else "Figure elements"
-        verb = "has" if missing_alt == 1 else "have"
-        out.append(_finding("AlternativeText:2", "Images lack descriptions", "major", f"{missing_alt} {noun} {verb} no alternative text.", "Add an equivalent description or mark the image decorative.", occurrences=missing_alt))
+    filename_alt = sum(x.alt is not None and alt_is_filename(str(x.alt)) for x in figures)
+    if missing_alt or filename_alt:
+        total = missing_alt + filename_alt
+        parts = []
+        if missing_alt:
+            parts.append(f"{missing_alt} with no alternative text")
+        if filename_alt:
+            parts.append(f"{filename_alt} whose alternative text is a filename")
+        noun = "Figure element" if total == 1 else "Figure elements"
+        out.append(_finding("AlternativeText:2", "Images lack descriptions", "major", f"{total} {noun}: {', '.join(parts)}.", "Describe the image's purpose, or mark it decorative.", occurrences=total))
 
     tables_missing_headers = sum(not present for present in facts.table_header_presence)
     if tables_missing_headers:
@@ -64,6 +112,6 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
             "Darken the text, or check it against its actual background if it sits on a dark fill.", confidence,
         ))
 
-    # TODO: Ally's Scanned/Ocred and LanguageCorrect classifiers are not yet
-    # reproducible from the public documentation and current calibration set.
+    # TODO: Ally's Ocred classifier is not yet reproduced. A full-page image
+    # with invisible OCR text still scored 0 (probe S02), like a plain scan.
     return out

@@ -43,26 +43,31 @@ Exit status is `1` when a Severe or Major automated finding is present, otherwis
 
 - malformed/unparsable PDF (`Parsable:1`)
 - encryption (`Security:1`)
-- missing structure tree (`Tagged:2`)
-- missing title (`Title:3`)
+- missing or empty structure tree (`Tagged:2`; Ally treats an empty tag tree as untagged)
+- missing title (`Title:3`; Ally reads the Info dictionary `/Title`, so an XMP-only title still fails)
 - missing language (`LanguagePresence:3`)
+- invalid or mismatched language (`LanguageCorrect:3`, low confidence): a value that is not a language code, or a declared language that disagrees with a function-word guess for English, Spanish, French, German, Italian, Portuguese or Dutch text. The score effect is observed; the code Ally displays has not been recorded yet
+- probable scan (`Scanned:1`, low confidence): every page is a single image covering at least 90% of the page with no visible text. Ally scored such files 0 but did not flag a LaTeX page whose image covered 58%
 - no headings in PDFs of at least three pages (`HeadingsPresence:2`)
 - first heading not H1 (`HeadingsStartAtOne:3`)
 - skipped heading level (`HeadingsSequential:3`)
 - heading level beyond H6 (`HeadingsHigherLevel:3`)
-- missing Figure alternative text (`AlternativeText:2`)
+- missing Figure alternative text, including a filename such as `figure.png` (`AlternativeText:2`)
 - tagged tables without TH cells (`TableHeaders:2`)
-- low-contrast text (`Contrast:2`): computes the WCAG contrast ratio of each painted text colour against an assumed white page and flags anything below 4.5:1. It understands `g`/`rg`/`k`, `cs`/`scn` with Gray/RGB/CMYK/ICC colour spaces, fill transparency, and text inside form XObjects, and ignores invisible OCR text (render mode 3). Near-white text (below 1.5:1) is medium confidence because Ally flagged it in calibration; mid-grey text is low confidence until Ally's own threshold is observed
+- low-contrast text (`Contrast:2`): computes the WCAG contrast ratio of each painted text colour against an assumed white page and flags anything below 4.5:1. It understands `g`/`rg`/`k`, `cs`/`scn` with Gray/RGB/CMYK/ICC colour spaces, fill transparency, and text inside form XObjects, and ignores invisible OCR text (render mode 3). Ally's threshold matched WCAG in October 2026 probes: #808080 (3.9:1) was flagged and #767676 (4.5:1) was not
 
 Role maps are resolved, so modern LaTeX structure names such as `/section` mapped to `/H1` are understood. A literal `/H7` remains detectable even when role-mapped to `/H6`, matching the observed Ally result.
 
 ## Ally score model
 
-Issue sets and occurrence counts matching an observed specimen receive its score as a medium-confidence estimate. They are not labeled high confidence because Ally may also use document composition. At present the calibration data includes all single-issue PDFs and the two observed multi-issue image-wrapper PDFs.
+Calibration so far (38 Ally observations, September and October 2026) supports a simple model:
 
-Repeated instances and unseen combinations get a low-confidence estimate: 100 minus the sum of each issue's observed single-issue point loss. On the one observed combination whose parts all have known single scores (untagged + no title + no language, Ally score 6), subtraction predicts 5 and multiplying the score ratios predicts 11. The displayed range covers both methods. Issues without a calibrated single score (currently `Contrast:2`) only widen the range.
+- **Point losses add.** Each issue costs what it cost alone (for example untagged 88, missing language 5), and combinations subtract the sum from 100. Every observed combination matched exactly, apart from fixture 15 (predicted 5, observed 6). Multiplying score ratios was ruled out.
+- **The score does not fall below 5** unless there is a severe issue. Grey text plus a missing alt text would add up to well below zero but scored 5.
+- **A scanned PDF scores 0.**
+- **Contrast is the exception:** it cost 95 points on a one-page file but about 48 on a two-page file, whether one page or both were grey. The tool currently divides the contrast loss by page count, which fits those two files only (low confidence; batch `ally-2026-10b` tests it).
 
-Score calibration is separate from issue detection. This matters because Ally's formula is unpublished and appears to depend on document composition as well as issue types.
+Exact matches to an observed file report medium confidence; so do unobserved combinations of issues with known single scores. Repeated issues (for example two images without alt text), page-count-dependent contrast, inferred codes and uncalibrated issues are low confidence and show a range.
 
 ## Full audit
 
@@ -70,10 +75,9 @@ The initial full mode adds probable image-only-page detection, multi-page headin
 
 ## Known limitations and TODOs
 
-- Reproduce Ally's `Scanned:1` and `Ocred:2` classifiers. A full-page raster wrapped by LuaLaTeX did not trigger either issue in the calibration run, so a naïve “image plus no text means Ally Scanned” rule would be wrong.
-- Implement `LanguageCorrect:3` with enough text and an explicit confidence threshold.
+- Pin down Ally's `Scanned:1` image-coverage threshold (between 58% and 100%) and reproduce `Ocred:2`. A full-page image with an invisible OCR layer still scored 0.
+- Replace the function-word language guess with a proper detector if real documents produce false `LanguageCorrect:3` results.
 - Replace the contrast operator heuristic with rendered foreground/background analysis. White text can be valid on a dark background, and text inside images is not checked.
-- Read the XMP `dc:title` if Ally turns out to accept it (probe `M01`). PDF 2.0 deprecates the Info dictionary, so some exporters write only XMP.
 - Select a cross-platform rendering/geometry backend after reviewing fidelity and licensing, then add reading-order, overlap, clipping, contrast, and effective-resolution checks.
 - Validate table header scope and irregular or spanning table cells.
 - Inspect link purpose, form-field labels and tab order, font embedding, and character mappings.
@@ -101,7 +105,7 @@ tests/fixtures/ally-2026-09/      compact controlled PDF corpus
 tools/build_test_corpus.py        reproducible LuaLaTeX corpus builder
 tools/verify_corpus.py            structural fixture summary
 tools/build_probe_batch.py        builds the next Ally calibration batch from the corpus
-probes/ally-2026-10/              generated probe PDFs awaiting Ally results
+probes/                           probe batches and their recorded Ally results
 ```
 
 The original Canvas screenshots are intentionally not included. The fixture manifest records the observed scores and expected issue codes without publishing course-interface captures.
@@ -115,13 +119,16 @@ python tools/build_test_corpus.py
 
 ## Collecting more Ally observations
 
-`probes/ally-2026-10/` holds 22 PDFs, each a copy of a scored fixture with one property changed. They answer the open questions that most limit prediction accuracy: Ally's contrast threshold and penalty, whether issue penalties add or multiply, which title and language metadata Ally reads, what counts as tagged, whether filename alt text passes, and what triggers `Scanned` and `Ocred`. `PROBES.md` lists each question and pdfcheck's current prediction.
+Each folder under `probes/` is a batch of PDFs, each a copy of a scored fixture with one property changed. `PROBES.md` lists each question, pdfcheck's prediction and, once recorded, Ally's result. Filled-in `results.csv` files are run as regression tests by `tests/test_probe_results.py`.
+
+- `ally-2026-10/`: 22 probes, results recorded 2026-10-21.
+- `ally-2026-10b/`: 8 follow-ups on the contrast page-count effect, the scan threshold, and the alt-text filename rule.
 
 1. Upload the PDFs to a Canvas course where Ally is enabled (an unpublished sandbox course is fine).
 2. Wait for Ally to finish processing, then open each file's Ally indicator.
-3. Record the score and every issue shown in `probes/ally-2026-10/results.csv`.
+3. Record the score and every issue shown in that batch's `results.csv`. The issue codes matter: several October results could only be inferred from the score.
 
-The files can be regenerated without LaTeX: `python tools/build_probe_batch.py` (requires Pillow).
+The newest batch can be regenerated without LaTeX: `python tools/build_probe_batch.py` (requires Pillow). Existing `results.csv` files are never overwritten.
 
 ## Contributing
 
