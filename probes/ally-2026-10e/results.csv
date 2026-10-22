@@ -1,5 +1,5 @@
 file,priority,pdfcheck_codes,pdfcheck_score,ally_score,ally_issue_codes,ally_fix_scores,processed_date,notes
-Z01_table_two_rows.pdf,1,none,100,,,,,
-Z02_table_one_row.pdf,2,none,100,,,,,
-Z03_grey_plus_two_blank_pages.pdf,1,Contrast:2,68,,,,,
-Z04_no_alt_plus_two_blank_pages.pdf,1,AlternativeText:2,54,,,,,
+Z01_table_two_rows.pdf,1,none,100,100,none,,,
+Z02_table_one_row.pdf,2,none,100,100,none,,,
+Z03_grey_plus_two_blank_pages.pdf,1,Contrast:2,68,5,This PDF contains text with insufficient contrast,,,
+Z04_no_alt_plus_two_blank_pages.pdf,1,AlternativeText:2,54,54,This PDF contains images without description,,,
