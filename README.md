@@ -126,8 +126,8 @@ Each folder under `probes/` is a batch of PDFs, each a copy of a scored fixture 
 - `ally-2026-10c/`: 7 probes testing whether major issues multiply, contrast on three pages, and what triggers `Scanned` (image coverage, JPEG encoding, a tagged handout with a large figure).
 
 1. Upload the PDFs to a Canvas course where Ally is enabled (an unpublished sandbox course is fine).
-2. Wait for Ally to finish processing, then open each file's Ally indicator.
-3. Record the score and every issue shown in that batch's `results.csv`. The issue codes matter: several October results could only be inferred from the score.
+2. Wait for Ally to finish processing, then click each file's Ally score indicator (the small gauge icon next to the file name) to open its feedback window. The issues are listed there; if only one is shown, look for an option to view all issues.
+3. Record the score in that batch's `results.csv`. In the `ally_issue_codes` column, paste the issue descriptions Ally lists for the file, separated by `;` (for example `This PDF is untagged; This PDF does not have a title`), or `none`. Ally shows instructors descriptions, not codes; `tests/ally_issue_text.py` translates them. If the tests report an unrecognized description, add a keyword rule there.
 
 The newest batch can be regenerated without LaTeX: `python tools/build_probe_batch.py` (requires Pillow). Existing `results.csv` files are never overwritten.
 
