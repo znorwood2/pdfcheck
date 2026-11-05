@@ -3,6 +3,12 @@ from __future__ import annotations
 from .model import DocumentFacts, Finding
 
 
+def _pages(pages: list[int]) -> str:
+    if len(pages) == 1:
+        return f"page {pages[0]}"
+    return "pages " + ", ".join(map(str, pages[:-1])) + f" and {pages[-1]}"
+
+
 def run_full_checks(facts: DocumentFacts) -> tuple[list[Finding], list[str], list[str]]:
     findings: list[Finding] = []
     manual: list[str] = []
@@ -13,15 +19,15 @@ def run_full_checks(facts: DocumentFacts) -> tuple[list[Finding], list[str], lis
     if text_error_pages:
         findings.append(Finding(
             "full.text-extraction-incomplete", "Text extraction was incomplete", "review", "high",
-            f"Text extraction failed on pages {text_error_pages}.",
-            "Inspect these pages manually; other text-dependent findings may be incomplete.",
+            f"Text could not be extracted from {_pages(text_error_pages)}.",
+            "Check these pages by hand; language, contrast and other text-based results may be incomplete.",
             occurrences=len(text_error_pages),
         ))
     if image_error_pages:
         findings.append(Finding(
             "full.image-inspection-incomplete", "Image inspection was incomplete", "review", "high",
-            f"Image enumeration failed on pages {image_error_pages}.",
-            "Inspect these pages manually; scan and image findings may be incomplete.",
+            f"Images could not be listed on {_pages(image_error_pages)}.",
+            "Check these pages by hand; scan and image results may be incomplete.",
             occurrences=len(image_error_pages),
         ))
     image_only_pages = [
@@ -34,20 +40,22 @@ def run_full_checks(facts: DocumentFacts) -> tuple[list[Finding], list[str], lis
     if image_only_pages:
         findings.append(Finding(
             "full.probable-scan", "Probable image-only pages", "major", "medium",
-            f"Pages {image_only_pages} contain images but no extractable text.",
-            "Run OCR, then verify recognition accuracy and reading order.", page=image_only_pages[0],
+            f"{_pages(image_only_pages).capitalize()} {'has' if len(image_only_pages) == 1 else 'have'} images but no text "
+            "that can be selected or read aloud, which usually means a scan.",
+            "Use the original digital pages, or run OCR and then check the recognised text and reading order.", page=image_only_pages[0],
+            confidence_note="A page that is only an image may be intentional, such as a full-page diagram with alt text.",
         ))
     if facts.page_count and text_chars == 0 and not image_only_pages and not text_error_pages:
-        findings.append(Finding("full.no-extractable-text", "No extractable text", "major", "high", "No page produced extractable text.", "Check character mappings or provide OCR."))
+        findings.append(Finding("full.no-extractable-text", "No extractable text", "major", "high", "No page has text that can be selected or read aloud.", "If the text is visible, its fonts may lack Unicode mappings: re-export with embedded, Unicode-mapped fonts. If the pages are images, run OCR."))
     # Canvas already reports this at three pages and above. Full mode extends
     # the warning to two-page documents without duplicating the same finding.
     if facts.tagged and facts.page_count == 2 and not facts.headings:
-        findings.append(Finding("full.no-headings", "No tagged headings", "major", "high", "The document has multiple pages but no tagged headings.", "Add headings that describe the document organization."))
+        findings.append(Finding("full.no-headings", "No tagged headings", "major", "high", "This 2-page document has no tagged headings. Ally only requires them from three pages, but headings help screen-reader users navigate any multi-page document.", "Use section commands (\\section, \\subsection) for headings rather than bold or large text."))
     if facts.title:
         title = str(facts.title).strip()
         filename = facts.path.stem
         if title.casefold() == filename.casefold() or title.lower().endswith(".pdf") or title.endswith("."):
-            findings.append(Finding("full.title-quality", "Document title may not be meaningful", "minor", "high", f"Title is {title!r}.", "Use a human-readable title distinct from the filename."))
+            findings.append(Finding("full.title-quality", "Document title may not be meaningful", "minor", "high", f"The title is {title!r}, which looks like a filename or sentence rather than a document title.", "Use a short, human-readable title, for example \\hypersetup{pdftitle={Week 3: Cell Biology}}."))
     if facts.page_count >= 10:
         manual.append("Confirm that bookmarks provide useful navigation for this long document.")
     manual.append("Verify that the tag-tree reading order matches the intended visual reading order.")
@@ -59,9 +67,9 @@ def run_full_checks(facts: DocumentFacts) -> tuple[list[Finding], list[str], lis
     if any(facts.page_image_counts):
         manual.append("Inspect contrast and meaningful text inside raster images and diagrams.")
     skipped.extend([
-        "Rendered foreground/background contrast analysis (rendering backend not yet selected).",
-        "Geometry-assisted reading-order and overlap analysis (rendering backend not yet selected).",
-        "Raster effective-resolution analysis (rendering backend not yet selected).",
+        "Contrast of text against its real background; it is currently measured against white (needs a PDF renderer, not yet included).",
+        "Reading order and overlapping content compared with the page layout (needs a PDF renderer).",
+        "Resolution of embedded images (needs a PDF renderer).",
     ])
     # TODO: add PDF/UA validation adapter, form-field labeling, link purpose,
     # font embedding/ToUnicode checks, table scope validation, and OCR comparison.

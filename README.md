@@ -39,6 +39,8 @@ pdfcheck --full --json - handout.pdf
 
 Exit status is `1` when a Severe or Major automated finding is present, otherwise `0`.
 
+Each finding explains what was found, why it matters to Ally, and how to fix it (with a LaTeX example where one applies). In `--canvas` mode each finding also shows the predicted score with only that issue fixed, the equivalent of Ally's "Increase score up to N%". The JSON report carries these as `score.score_if_fixed`, keyed by Ally code. Findings below high confidence say why in `confidence_note`.
+
 ## Implemented Canvas checks
 
 - malformed/unparsable PDF (`Parsable:1`)

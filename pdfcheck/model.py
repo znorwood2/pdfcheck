@@ -76,6 +76,8 @@ class Finding:
     ally_code: str | None = None
     page: int | None = None
     occurrences: int = 1
+    # Why confidence is below high, in plain language.
+    confidence_note: str | None = None
 
 
 @dataclass
@@ -85,6 +87,8 @@ class ScorePrediction:
     basis: str
     lower: int | None = None
     upper: int | None = None
+    # Predicted score with only that Ally issue fixed, keyed by Ally code.
+    score_if_fixed: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

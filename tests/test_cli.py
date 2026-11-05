@@ -27,6 +27,22 @@ class CliTests(unittest.TestCase):
             status = main(["--canvas", "--json", "-", str(CORPUS / "12_figure_without_alt.pdf")])
         self.assertEqual(1, status)
 
+    def test_text_report_explains_score_and_fix(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            main(["--canvas", str(CORPUS / "12_figure_without_alt.pdf")])
+        text = " ".join(out.getvalue().split())
+        self.assertIn("Predicted Ally score: 54%", text)
+        self.assertIn("exactly these issues (images without alt text)", text)
+        self.assertIn("alt={...}", text)
+        self.assertIn("Fixing only this would raise the predicted score to 100%.", text)
+
+    def test_json_reports_score_if_fixed(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            main(["--canvas", "--json", "-", str(CORPUS / "02_untagged.pdf")])
+        self.assertEqual({"Tagged:2": 100}, json.loads(out.getvalue())["score"]["score_if_fixed"])
+
     def test_json_write_failure_returns_two(self):
         with tempfile.TemporaryDirectory() as directory:
             with redirect_stderr(io.StringIO()):
