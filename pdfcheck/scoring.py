@@ -89,49 +89,108 @@ def estimate_score(codes: list[str], page_count: int | None = 1) -> int:
     return max(SCORE_FLOOR, int(score + 0.5))
 
 
-def predict_score(findings: list[Finding], page_count: int | None = 1) -> ScorePrediction:
-    counts: Counter[str] = Counter()
-    for finding in findings:
-        if finding.ally_code:
-            counts[finding.ally_code] += max(1, finding.occurrences)
+# Plain-language names for score explanations.
+ISSUE_NAMES = {
+    "Parsable:1": "unreadable PDF",
+    "Security:1": "encryption",
+    "Scanned:1": "scanned pages",
+    "Tagged:2": "missing tags",
+    "Title:3": "missing title",
+    "LanguagePresence:3": "missing language",
+    "LanguageCorrect:3": "wrong or invalid language",
+    "HeadingsPresence:2": "missing headings",
+    "HeadingsStartAtOne:3": "first heading not H1",
+    "HeadingsSequential:3": "skipped heading level",
+    "HeadingsHigherLevel:3": "heading beyond H6",
+    "AlternativeText:2": "images without alt text",
+    "TableHeaders:2": "tables without headers",
+    "Contrast:2": "low-contrast text",
+}
+
+
+def _name(code: str) -> str:
+    return ISSUE_NAMES.get(code, code)
+
+
+def _names(codes) -> str:
+    return ", ".join(_name(c) for c in codes)
+
+
+def _predict(counts: Counter[str], page_count: int | None) -> ScorePrediction:
     zero = sorted(c for c in counts if c in ZERO_SCORE_CODES)
     if zero:
         return ScorePrediction(
             0, "low",
-            f"{', '.join(zero)} has been observed to score 0, but the issue itself is predicted with low confidence.",
+            f"Ally scored every test PDF with {_names(zero)} 0, but this tool detects that issue "
+            "with a rule of thumb, not Ally's own method.",
         )
     signature = tuple(sorted(counts.items()))
     if signature in CALIBRATED_COMBINATIONS and not _contrast_is_extrapolated(counts, page_count):
-        return ScorePrediction(
-            CALIBRATED_COMBINATIONS[signature],
-            "medium",
-            "Issue combination and occurrence counts match an observed calibration specimen; Ally may also use document composition.",
-        )
+        if not signature:
+            basis = ("None of the issues this tool checks for were found, and Ally scored such test "
+                     "PDFs 100. Ally may still report problems this tool does not check.")
+        else:
+            basis = (f"In testing, Ally gave this score to a PDF with exactly these issues ({_names(counts)}). "
+                     "The test PDFs were 1-3 pages long, so longer documents may score differently.")
+        return ScorePrediction(CALIBRATED_COMBINATIONS[signature], "medium", basis)
     known = [c for c in counts.elements() if c in SINGLE_ISSUE_SCORES]
     unknown = sorted(c for c in counts if c not in SINGLE_ISSUE_SCORES)
     if not known:
-        return ScorePrediction(None, "low", "No calibrated score is available for this issue combination.")
+        return ScorePrediction(None, "low", f"Ally has not yet scored a PDF with {_names(unknown)}, so no estimate is possible.")
     estimate = estimate_score(known, page_count)
-    repeated = any(n > 1 for n in counts.values())
-    extrapolated = _contrast_is_extrapolated(counts, page_count) or bool(INFERRED_CODES & set(counts))
-    majors = sum(1 for c in counts if not _is_minor(c))
-    if not unknown and not repeated and not extrapolated and majors <= 1:
+    repeated = sorted(c for c, n in counts.items() if n > 1)
+    contrast = _contrast_is_extrapolated(counts, page_count)
+    inferred = sorted(INFERRED_CODES & set(counts))
+    majors = sorted(c for c in counts if not _is_minor(c))
+    if not unknown and not repeated and not contrast and not inferred and len(majors) <= 1:
         return ScorePrediction(
             estimate, "medium",
-            "Unobserved combination of calibrated issues; minor-issue point losses have subtracted exactly in every observed combination.",
+            "Ally has not scored this exact combination, but it has scored each of these issues, "
+            "and minor issues have always lowered the score by a fixed amount.",
         )
-    if majors > 1:
-        extrapolated = True
     reasons = []
-    if repeated:
-        reasons.append("repeated issues (whether Ally scales by count is unknown)")
-    if extrapolated:
-        reasons.append("several major issues, inferred codes, or page-count-dependent contrast (one observation each)")
+    for code in repeated:
+        reasons.append(f"{_name(code)} occurs {counts[code]} times, but the test PDFs had only one, "
+                       "so whether Ally charges per occurrence is unknown")
+    if len(majors) > 1:
+        reasons.append(f"how several major issues ({_names(majors)}) combine is based on only two test PDFs")
+    if contrast:
+        if page_count and 1 < page_count <= 3:
+            reasons.append(f"the contrast penalty shrinks with length; on {page_count}-page documents it rests on two test PDFs")
+        elif page_count:
+            reasons.append(f"the contrast penalty shrinks with length, and was measured only on 1-3 page documents (this one has {page_count} pages with text)")
+        else:
+            reasons.append("the contrast penalty depends on the number of pages with text, which could not be determined")
+    for code in inferred:
+        reasons.append(f"the cost of {_name(code)} was measured, but which Ally check reports it is a guess")
     if unknown:
-        reasons.append(f"uncalibrated issues {unknown}")
+        reasons.append(f"Ally has not yet scored {_names(unknown)}, so those issues are left out")
     spread = 8 + 4 * max(0, sum(counts.values()) - 2) + 5 * len(unknown)
     return ScorePrediction(
         estimate, "low",
-        "Estimate subtracts observed single-issue point losses; includes " + "; ".join(reasons) + ".",
+        "Estimated from what each issue cost on its own in Ally tests. It is uncertain because "
+        + "; ".join(reasons) + ".",
         max(SCORE_FLOOR, estimate - spread), min(100, estimate + spread),
     )
+
+
+def _counts(findings: list[Finding]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for finding in findings:
+        if finding.ally_code:
+            counts[finding.ally_code] += max(1, finding.occurrences)
+    return counts
+
+
+def predict_score(findings: list[Finding], page_count: int | None = 1) -> ScorePrediction:
+    counts = _counts(findings)
+    prediction = _predict(counts, page_count)
+    # Like Ally's "Increase score up to N%": the score with only that issue fixed.
+    if prediction.score is not None:
+        for code in counts:
+            rest = counts.copy()
+            del rest[code]
+            fixed = _predict(rest, page_count).score
+            if fixed is not None:
+                prediction.score_if_fixed[code] = fixed
+    return prediction

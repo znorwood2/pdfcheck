@@ -4,12 +4,15 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import textwrap
 
 from .canvas import run_canvas_checks
 from .extract import extract_facts
 from .full import run_full_checks
 from .model import Report
 from .scoring import predict_score
+
+WIDTH = 88
 
 
 def build_report(path: Path, mode: str) -> Report:
@@ -20,38 +23,65 @@ def build_report(path: Path, mode: str) -> Report:
     if mode == "canvas":
         return Report(path, mode, canvas, predict_score(canvas, facts.text_page_count))
     if not facts.parsable or facts.encrypted:
-        return Report(path, mode, canvas, None, [], ["Broader checks were not run because the PDF could not be read safely."])
+        return Report(path, mode, canvas, None, [], ["All other checks, because the PDF could not be opened (see the finding above)."])
     full, manual, skipped = run_full_checks(facts)
     return Report(path, mode, canvas + full, None, manual, skipped)
 
 
+MODE_DESCRIPTIONS = {
+    "canvas": "Canvas check: predicts what Anthology Ally will report for this PDF.",
+    "full": "Full check: Ally's issues plus broader accessibility checks.",
+}
+SEVERITY_ORDER = {"severe": 0, "major": 1, "minor": 2, "review": 3}
+SEVERITY_LABELS = {"review": "CHECK"}
+
+
+def _wrap(text: str, **kwargs) -> str:
+    # Keep LaTeX snippets and codes such as en-US on one line.
+    return textwrap.fill(text, width=WIDTH, break_on_hyphens=False, break_long_words=False, **kwargs)
+
+
 def _print_report(report: Report) -> None:
-    print(f"{report.path} - {report.mode} accessibility report")
-    if report.score:
-        score = "unavailable" if report.score.score is None else f"{report.score.score}/100"
-        if report.score.lower is not None:
-            score += f" (estimated range {report.score.lower}-{report.score.upper})"
-        print(f"Predicted Ally score: {score}")
-        print(f"Score confidence: {report.score.confidence} - {report.score.basis}")
+    print(report.path)
+    print(MODE_DESCRIPTIONS.get(report.mode, f"{report.mode} check"))
+    prediction = report.score
+    if prediction:
+        if prediction.score is None:
+            print("\nPredicted Ally score: not available")
+        else:
+            line = f"\nPredicted Ally score: {prediction.score}%"
+            if prediction.lower is not None:
+                line += f" (likely between {prediction.lower}% and {prediction.upper}%)"
+            print(line)
+        print(_wrap(f"Confidence: {prediction.confidence}. {prediction.basis}"))
     if not report.findings:
-        print("\nNo automated problems found.")
+        print("\nNo problems found by the automated checks.")
     else:
-        print("\nFindings:")
-        order = {"severe": 0, "major": 1, "minor": 2, "review": 3}
-        for finding in sorted(report.findings, key=lambda x: order.get(x.severity, 9)):
-            code = f" [{finding.ally_code}]" if finding.ally_code else ""
-            count = f", {finding.occurrences} occurrences" if finding.occurrences > 1 else ""
-            print(f"- {finding.severity.upper()}{code}: {finding.title} ({finding.confidence} confidence{count})")
-            print(f"  {finding.message}")
-            print(f"  Suggestion: {finding.suggestion}")
+        findings = sorted(report.findings, key=lambda x: SEVERITY_ORDER.get(x.severity, 9))
+        noun = "issue" if len(findings) == 1 else "issues"
+        print(f"\n{len(findings)} {noun} found, most serious first:")
+        for number, finding in enumerate(findings, 1):
+            label = SEVERITY_LABELS.get(finding.severity, finding.severity.upper())
+            code = f"  [Ally: {finding.ally_code}]" if finding.ally_code else ""
+            print(f"\n{number}. {label}: {finding.title}{code}")
+            lines = [finding.message, f"Fix: {finding.suggestion}"]
+            if prediction and prediction.score is not None and finding.ally_code in prediction.score_if_fixed:
+                fixed = prediction.score_if_fixed[finding.ally_code]
+                if fixed > prediction.score:
+                    lines.append(f"Fixing only this would raise the predicted score to {fixed}%.")
+            if finding.confidence != "high":
+                note = f" {finding.confidence_note}" if finding.confidence_note else ""
+                lines.append(f"Confidence: {finding.confidence}.{note}")
+            for text in lines:
+                print(_wrap(text, initial_indent="   ", subsequent_indent="   "))
     if report.manual_checks:
-        print("\nManual review:")
+        print("\nCheck by hand (automated checks cannot judge these):")
         for item in report.manual_checks:
-            print(f"- {item}")
+            print(_wrap(item, initial_indent="- ", subsequent_indent="  "))
     if report.skipped_checks:
-        print("\nEnhanced checks not run:")
+        print("\nNot checked:")
         for item in report.skipped_checks:
-            print(f"- {item}")
+            print(_wrap(item, initial_indent="- ", subsequent_indent="  "))
 
 
 def main(argv: list[str] | None = None) -> int:
