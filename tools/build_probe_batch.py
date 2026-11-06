@@ -21,7 +21,7 @@ import sys
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (
-    DecodedStreamObject, DictionaryObject, NameObject, TextStringObject, ArrayObject,
+    DecodedStreamObject, DictionaryObject, FloatObject, NameObject, TextStringObject, ArrayObject,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -682,6 +682,99 @@ def _():
 def _():
     writer = load("12_figure_without_alt.pdf")
     add_blank_pages(writer, 2)
+    return writer
+
+
+# ===========================================================================
+# Batch 6 (ally-2026-11): how much low-contrast text it takes to be charged,
+# and layout tables. A real 18-page exam with four pure-red figure labels and
+# 11 headerless layout tables scored 69: the tables cost what one table costs,
+# and the red labels cost almost nothing, where dividing a page's penalty by
+# the page count predicted 5 points.
+# ===========================================================================
+BATCH = "ally-2026-11"
+
+
+def recolour_runs(writer: PdfWriter, page_index: int, runs: list[int], fill: bytes) -> None:
+    """Paint the given text-showing operations (0-based, in content order) in `fill`, then reset to black."""
+    from pypdf.generic import ContentStream
+    page = writer.pages[page_index]
+    stream = ContentStream(page.get_contents(), writer)
+    out, seen = [], 0
+    colour = [x for x in fill.split()]
+    operands, operator = [FloatObject(x) for x in colour[:-1]], colour[-1]
+    for ops, op in stream.operations:
+        if op in (b"TJ", b"Tj", b"'", b'"'):
+            if seen in runs:
+                out.append((operands, operator))
+                out.append((ops, op))
+                out.append(([FloatObject(0)], b"g"))
+                seen += 1
+                continue
+            seen += 1
+        out.append((ops, op))
+    missing = set(runs) - set(range(seen))
+    if missing:
+        raise RuntimeError(f"page {page_index + 1} has no text runs {sorted(missing)}")
+    stream.operations = out
+    set_content(writer, page_index, stream.get_data())
+
+
+GREY = b"0.6667 g"   # #AAAAAA, 2.3:1
+RED = b"1 0 0 rg"    # #FF0000, 4.0:1, the colour of the exam's labels
+
+
+@probe("R01_one_grey_heading_word.pdf", "01_tagged_baseline.pdf", "Only the 7-letter subsection heading #AAAAAA (7 of 193 glyphs)",
+       "Is a single grey word charged like a grey page (score 5) or by amount (about 97)?", 1)
+def _():
+    writer = load("01_tagged_baseline.pdf")
+    recolour_runs(writer, 0, [5], GREY)
+    return writer
+
+
+@probe("R02_red_section_number.pdf", "01_tagged_baseline.pdf", "Only the section number '1' #FF0000 (2 of 193 glyphs)",
+       "Like the exam's red figure labels, on one page. Flagged at all? Score 5 means the page rule; 99-100 means amount.", 1)
+def _():
+    writer = load("01_tagged_baseline.pdf")
+    recolour_runs(writer, 0, [0], RED)
+    return writer
+
+
+@probe("R03_all_text_red.pdf", "01_tagged_baseline.pdf", "All text #FF0000 (4.0:1)",
+       "Control for R02: is pure red charged like grey when it is the whole page? Expect 5.", 1)
+def _():
+    writer = load("01_tagged_baseline.pdf")
+    recolour_text(writer, 0)  # make sure every run starts from a known fill
+    data = writer.pages[0].get_contents().get_data()
+    set_content(writer, 0, re.sub(rb"(?<![\d.])0(?:\.0000)? g\b", b"1 0 0 rg", data))
+    return writer
+
+
+@probe("R04_long_page_241_grey.pdf", "05_no_headings_2_pages.pdf", "Page 1 only; its first three lines #AAAAAA (241 of 1168 glyphs, 21%)",
+       "Many grey glyphs but a small share of the page. 5 if the count matters; about 80 if the share matters.", 1)
+def _():
+    writer = load("05_no_headings_2_pages.pdf")
+    keep_first_page(writer)
+    recolour_runs(writer, 0, [0, 1, 2], GREY)
+    return writer
+
+
+@probe("R05_long_page_40_grey.pdf", "05_no_headings_2_pages.pdf", "Page 1 only; its first line #AAAAAA (40 of 1168 glyphs, 3%)",
+       "Few grey glyphs, small share. pdfcheck guesses about 80 (by count); about 97 if only the share matters.", 2)
+def _():
+    writer = load("05_no_headings_2_pages.pdf")
+    keep_first_page(writer)
+    recolour_runs(writer, 0, [0], GREY)
+    return writer
+
+
+@probe("T01_table_retagged_as_div.pdf", "14_table_without_headers.pdf", "Table, TR and TD tags renamed Div (a layout table)",
+       "Does Ally accept a layout grid tagged as Div? Expect 100. The fix for the exam's graph grids and checkbox lists.", 2)
+def _():
+    writer = load("14_table_without_headers.pdf")
+    for _, element in struct_with_parents(writer):
+        if element.get("/S") in ("/Table", "/TR", "/TD", "/TH"):
+            retag(element, "/Div")
     return writer
 
 

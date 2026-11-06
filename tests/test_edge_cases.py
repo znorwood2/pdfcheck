@@ -43,6 +43,25 @@ class EdgeCaseTests(unittest.TestCase):
         finding = next(x for x in run_canvas_checks(facts) if x.ally_code == "TableHeaders:2")
         self.assertEqual(1, finding.occurrences)
 
+    def test_many_tables_without_headers_cost_the_same_as_one(self):
+        # 11 headerless tables scored 69, the one-table score (November 2026).
+        facts = DocumentFacts(path=Path("tables.pdf"), page_count=1, tagged=True, title="Title", language="en")
+        facts.structure = [StructureElement("/Table", "/Table")]
+        facts.table_header_presence = [False] * 11
+        facts.table_row_counts = [4] * 11
+        facts.table_pages = [{4}] * 5 + [{6}] * 6
+        findings = run_canvas_checks(facts)
+        finding = next(x for x in findings if x.ally_code == "TableHeaders:2")
+        self.assertEqual(11, finding.occurrences)
+        self.assertIn("pages 4, 6", finding.message)
+        self.assertIn("table/tagging=presentation", finding.suggestion)
+        self.assertEqual(69, predict_score(findings).score)
+
+    def test_table_pages_are_read_from_the_tags(self):
+        from pdfcheck.extract import extract_facts
+        facts = extract_facts(Path(__file__).parent / "fixtures" / "ally-2026-09" / "14_table_without_headers.pdf")
+        self.assertEqual([{1}], facts.table_pages)
+
     def test_text_extraction_failure_is_not_called_a_scan(self):
         facts = DocumentFacts(
             path=Path("broken-text.pdf"), page_count=1, tagged=True, title="Title", language="en",

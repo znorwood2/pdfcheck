@@ -9,7 +9,7 @@ from pypdf.generic import (
 
 from pdfcheck.canvas import run_canvas_checks
 from pdfcheck.extract import extract_facts
-from pdfcheck.model import DocumentFacts
+from pdfcheck.model import DocumentFacts, StructureElement
 from pdfcheck.scoring import estimate_score
 
 
@@ -121,3 +121,62 @@ class FallbackScoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SmallAmountOfContrastTests(unittest.TestCase):
+    """November 2026: an 18-page tagged PDF with 11 headerless layout tables and
+    four pure-red (#FF0000, 4.0:1) figure labels on pages 9 and 16 scored 69.
+    Ally's "Increase score up to" figures: fix tables 100, fix contrast 69."""
+
+    def exam_facts(self) -> DocumentFacts:
+        facts = DocumentFacts(path=Path("exam.pdf"), page_count=18, tagged=True, title="Exam", language="en-US")
+        facts.structure = [StructureElement("/H1", "/H1")]
+        facts.page_visible_text_chars = [1000] * 18
+        facts.table_header_presence = [False] * 11
+        facts.table_row_counts = [4] * 7 + [3] * 4
+        facts.lowest_text_contrast = 4.0
+        facts.lowest_text_rgb = (1.0, 0.0, 0.0)
+        facts.low_contrast_glyphs = 4
+        facts.low_contrast_pages = [9, 16]
+        facts.low_contrast_page_share = 3 / 600
+        return facts
+
+    def test_matches_ally_on_the_exam(self):
+        from pdfcheck.scoring import predict_score
+        facts = self.exam_facts()
+        findings = run_canvas_checks(facts)
+        self.assertEqual({"TableHeaders:2", "Contrast:2"}, {x.ally_code for x in findings})
+        prediction = predict_score(findings, facts.text_page_count)
+        self.assertEqual(69, prediction.score)
+        self.assertEqual({"TableHeaders:2": 100, "Contrast:2": 69}, prediction.score_if_fixed)
+        # The range still allows a few glyphs to cost as much as a page of them.
+        self.assertLessEqual(prediction.lower, 65)
+
+    def test_message_names_pages_and_colour(self):
+        finding = next(x for x in run_canvas_checks(self.exam_facts()) if x.ally_code == "Contrast:2")
+        self.assertIn("4 characters on pages 9, 16", finding.message)
+        self.assertIn("#FF0000 (pure red)", finding.message)
+
+    def test_a_page_of_failing_text_gets_the_full_penalty(self):
+        from pdfcheck.canvas import contrast_scale
+        facts = DocumentFacts(path=Path("white.pdf"), low_contrast_glyphs=31, low_contrast_page_share=1.0)
+        self.assertEqual(1.0, contrast_scale(facts))
+        facts = DocumentFacts(path=Path("grey.pdf"), low_contrast_glyphs=200, low_contrast_page_share=0.3)
+        self.assertEqual(1.0, contrast_scale(facts))
+
+    def test_glyphs_counted_once_in_two_byte_fonts(self):
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=200, height=200)
+        font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type0"),
+                                 NameObject("/BaseFont"): NameObject("/Test")})
+        page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject(
+            {NameObject("/F1"): writer._add_object(font)})})
+        page[NameObject("/Contents")] = _stream(
+            writer, b"BT /F1 12 Tf 20 100 Td <00410042> Tj 1 0 0 rg <0043> Tj ET")
+        path = Path(tempfile.mkdtemp()) / "type0.pdf"
+        with path.open("wb") as handle:
+            writer.write(handle)
+        facts = extract_facts(path)
+        self.assertEqual(1, facts.low_contrast_glyphs)
+        self.assertEqual([1], facts.low_contrast_pages)
+        self.assertAlmostEqual(1 / 3, facts.low_contrast_page_share)

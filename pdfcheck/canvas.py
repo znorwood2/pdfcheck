@@ -12,6 +12,25 @@ SCAN_IMAGE_COVERAGE = 0.65
 # A page with more visible text than this is not treated as a scan.
 SCAN_MAX_VISIBLE_CHARS = 200
 MIN_TABLE_ROWS = 3
+# The fewest low-contrast glyphs seen to carry the full contrast penalty: a
+# one-page file with 193 grey glyphs scored 5 (probe C03).
+FULL_CONTRAST_GLYPHS = 193
+
+
+def contrast_scale(facts: DocumentFacts) -> float:
+    """Fraction of the full contrast penalty to expect.
+
+    Four red glyphs in an 18-page PDF (under 1% of their pages' text) cost
+    under half a point, where a page of grey text costs 95 divided by the page
+    count (November 2026). Every fully charged file so far had at least 193
+    failing glyphs or a page made entirely of them (fixture 16: 31 white
+    glyphs, all of its text). Counting glyphs and measuring the worst page's
+    share both fit, so the larger of the two is used until probe batch
+    ally-2026-11 tells them apart.
+    """
+    if not facts.low_contrast_glyphs:
+        return 1.0
+    return min(1.0, max(facts.low_contrast_glyphs / FULL_CONTRAST_GLYPHS, facts.low_contrast_page_share))
 
 
 def alt_is_filename(alt: str) -> bool:
@@ -30,12 +49,34 @@ def _looks_scanned(facts: DocumentFacts) -> bool:
 def _finding(
     code: str, title: str, severity: str, message: str, suggestion: str,
     confidence: str = "high", occurrences: int = 1, confidence_note: str | None = None,
+    scale: float | None = None,
 ) -> Finding:
     return Finding(
         check_id=f"canvas.{code.lower()}", ally_code=code, title=title,
         severity=severity, confidence=confidence, message=message, suggestion=suggestion,
-        occurrences=occurrences, confidence_note=confidence_note,
+        occurrences=occurrences, confidence_note=confidence_note, scale=scale,
     )
+
+
+def _page_list(pages) -> str:
+    pages = sorted(pages)
+    if not pages:
+        return ""
+    shown = ", ".join(str(x) for x in pages[:12]) + (", ..." if len(pages) > 12 else "")
+    return f"page {shown}" if len(pages) == 1 else f"pages {shown}"
+
+
+COLOUR_NAMES = {(255, 0, 0): "pure red", (0, 255, 0): "pure green", (255, 255, 0): "yellow",
+                (0, 255, 255): "cyan", (255, 0, 255): "magenta", (255, 255, 255): "white"}
+
+
+def _colour(rgb) -> str:
+    if rgb is None:
+        return ""
+    key = tuple(round(x * 255) for x in rgb)
+    hex_value = "#" + "".join(f"{x:02X}" for x in key)
+    name = COLOUR_NAMES.get(key) or ("grey" if key[0] == key[1] == key[2] else "")
+    return f"{hex_value} ({name})" if name else hex_value
 
 
 LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "fr": "French", "de": "German", "it": "Italian", "pt": "Portuguese", "nl": "Dutch"}
@@ -186,33 +227,53 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
     # same table cut to two rows or one row (probes Z01, Z02), a one-cell
     # table (X01) or a two-row table spread over three pages (Y01, Y02).
     rows = facts.table_row_counts or [None] * len(facts.table_header_presence)
-    tables_missing_headers = sum(
-        not present and (count is None or count >= MIN_TABLE_ROWS)
-        for present, count in zip(facts.table_header_presence, rows)
-    )
-    if tables_missing_headers:
-        verb = "has" if tables_missing_headers == 1 else "have"
+    table_pages = facts.table_pages or [set()] * len(facts.table_header_presence)
+    flagged = [
+        pages for present, count, pages in zip(facts.table_header_presence, rows, table_pages)
+        if not present and (count is None or count >= MIN_TABLE_ROWS)
+    ]
+    if flagged:
+        n = len(flagged)
+        verb = "has" if n == 1 else "have"
+        where = _page_list(set().union(*flagged))
         out.append(_finding(
             "TableHeaders:2", "Table is missing headers", "major",
-            f"{_plural(tables_missing_headers, 'tagged table')} with {MIN_TABLE_ROWS} or more rows {verb} no header cells, "
-            "so screen readers cannot announce what each column or row means. (Ally ignores tables of 1-2 rows.)",
-            "Mark the header row, for example \\tagpdfsetup{table/header-rows={1}} before the tabular.",
-            occurrences=tables_missing_headers,
+            f"{_plural(n, 'tagged table')} with {MIN_TABLE_ROWS} or more rows {verb} no header cells"
+            + (f" ({where})" if where else "")
+            + ", so screen readers cannot announce what each column or row means. (Ally ignores tables of 1-2 rows.)"
+            + (" Ally charged 11 such tables the same as one." if n > 1 else ""),
+            "If a table holds data, mark its header row: \\tagpdfsetup{table/header-rows={1}} before the tabular. "
+            "If it only lays things out (a grid of graphs, answer checkboxes, aligned choices), mark it as a "
+            "layout table instead: \\tagpdfsetup{table/tagging=presentation} before it, or use minipages "
+            "instead of a tabular.",
+            occurrences=n,
         ))
 
     if facts.probable_low_contrast_text:
         ratio = facts.lowest_text_contrast
-        # Ally flagged white text (ratio 1.0) in the calibration corpus. Where
-        # Ally draws the line between 1.0 and WCAG's 4.5:1 is not yet observed.
+        glyphs = facts.low_contrast_glyphs
+        colour = _colour(facts.lowest_text_rgb)
+        where = _page_list(facts.low_contrast_pages)
+        detail = (f"{_plural(glyphs, 'character')} on {where} fall below 4.5:1 against a white page"
+                  if glyphs and where else "Some text falls below 4.5:1 against a white page")
+        detail += f"; the lightest is {colour + ' at ' if colour else ''}{ratio:.2f}:1."
+        scale = contrast_scale(facts)
+        if scale < 0.5:
+            detail += (" Ally still lists this issue for a few characters, but charged almost nothing "
+                       "for 4 red figure labels in an 18-page PDF.")
+        else:
+            detail += " In Ally tests a page of such text cost the same however light it was."
+        # Ally flagged white text (ratio 1.0) in the calibration corpus and
+        # matched WCAG's 4.5:1 line in probes C05 and C06.
         confidence = "medium" if ratio < 1.5 else "low"
         out.append(_finding(
-            "Contrast:2", "Text may have insufficient contrast", "major",
-            f"The lightest text has a contrast ratio of {ratio:.2f}:1 against a white page; at least 4.5:1 is needed. "
-            "In Ally tests the penalty was the same however light the text was, and however many pages had it.",
-            "Use a darker colour (#767676 or darker on white). Look for \\color{gray}, black!NN, light link colours, "
-            "and white text such as hidden text layers.", confidence,
+            "Contrast:2", "Text may have insufficient contrast", "major", detail,
+            "Use a darker colour (#767676 or darker on white). Pure red (#FF0000) is 4.0:1, so it fails; "
+            "a darker red such as #C00000 (6.5:1) passes. Look for \\color{gray}, \\color{red}, black!NN, "
+            "light link colours, coloured figure labels, and white text such as hidden text layers.", confidence,
             confidence_note=("Colours are compared with a white page. Text on a coloured background is not "
-                             "judged correctly, and how Ally treats a small amount of grey text is untested."),
+                             "judged correctly."),
+            scale=scale if scale < 1 else None,
         ))
 
     # TODO: Ally's Ocred classifier is not yet reproduced. A full-page image

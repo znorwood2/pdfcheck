@@ -44,6 +44,7 @@ The model below reproduces all 62 observations to within 1 point. Ally's scores 
 - **The floor is 5.** No document without a severe issue scored below 5, even when the penalties add up to more.
 - **Scanned PDFs score 0.**
 - **Contrast is the only penalty seen to shrink with length.** The loss is about 95 ÷ (number of pages with visible text). Blank pages don't count. It doesn't matter how many of the pages have gray text: one gray page out of three cost as much as three.
+- **A few low-contrast characters cost almost nothing, but are still listed.** An 18-page exam with four pure-red (`#FF0000`) figure labels scored 69 with or without them (November 2026). How much text it takes to be charged in full is being probed (batch `ally-2026-11`).
 - **Untagged does not shrink with length:** it scored 12 on one page and on three.
 - **Missing alt text:** unknown whether it shrinks on longer documents. Blank pages didn't change it, but documents with more text pages weren't tested.
 - **"Increase score up to N%".** Ally lists this under each issue. It's the score after fixing only that issue, and it matched the model in every case recorded. The Skill can tell users to read these figures to decide what to fix first.
@@ -83,6 +84,8 @@ The model below reproduces all 62 observations to within 1 point. Ally's scores 
 
 ### Tables
 - A tagged table of 3+ rows with no TH cells costs 31.
+- **Many such tables cost the same as one.** The 18-page exam had 11 headerless tables and scored 69, the one-table score; Ally said fixing them would raise it to 100.
+- In that exam every table was a layout table made with `tabular`: a 2×3 grid of graphs, "Graph A / Graph B / ..." checkbox lists, and positive/negative/zero answer boxes. Header rows make no sense there. Mark them as layout with `\tagpdfsetup{table/tagging=presentation}` before the `tabular` (or lay them out with minipages). Ally's response to presentation tagging is **untested**; probe T01 checks a table retagged as `Div`.
 - **Tables with 1 or 2 rows were not checked at all**, presumably because Ally treats them as layout tables.
 - `\tagpdfsetup{table/header-rows={1}}` before the `tabular` produced TH cells, and the table passed.
 
@@ -90,7 +93,8 @@ The model below reproduces all 62 observations to within 1 point. Ally's scores 
 - Ally's threshold matched WCAG AA 4.5:1 against white exactly. `#767676` (4.54:1) passed; `#808080` (3.95:1) and anything lighter failed.
 - The penalty did not depend on how light the text was: #EEEEEE and #808080 both scored 5.
 - White text (an invisible text layer done with `\color{white}`) was flagged as a contrast failure.
-- **Untested:** whether a single short gray phrase (a footer, a "draft" note, a caption) triggers the full penalty, and whether Ally considers the real background (white text on a dark box).
+- Pure red (`#FF0000`) is 4.0:1 on white and was flagged, even as four single-letter labels inside TikZ figures. Use a darker red such as `#C00000` (6.5:1).
+- **Untested:** whether a single short gray phrase (a footer, a "draft" note, a caption) triggers the full penalty on a one-page document, and whether Ally considers the real background (white text on a dark box).
 
 ### Scans
 - An **untagged** PDF that is mostly one image (70%, 80% or 100% of the page) scored 0. This held even with an invisible OCR text layer or a visible line of text.
@@ -156,12 +160,13 @@ Notes for the Skill:
    - Flag any missing `alt`, since LaTeX will silently insert the filename.
    - For purely decorative images, consider the `artifact` option (**untested** in Ally).
 5. Documents longer than two pages use `\section`-style headings, not `\textbf` lines. The first heading is level 1 and no levels are skipped.
-6. Tables with three or more rows declare header rows (`\tagpdfsetup{table/header-rows={1}}`, or the equivalent for the user's LaTeX version).
+6. Tables with three or more rows declare header rows (`\tagpdfsetup{table/header-rows={1}}`, or the equivalent for the user's LaTeX version). A `tabular` used only for layout (a grid of graphs, checkbox choices) is marked `\tagpdfsetup{table/tagging=presentation}` instead.
 7. No text colour lighter than `#767676` on a white page. Search for:
    - `\color{gray}`, `\color{lightgray}`, `gray!NN`, `black!NN` with NN below about 54
    - light `hyperref` link colours (`colorlinks` with `linkcolor`/`urlcolor`)
    - coloured headers, footers or theme colours (beamer)
    - any `\color{white}` text
+   - `\color{red}` and other bright colours, including labels inside TikZ or pgfplots figures (pure red is 4.0:1)
 8. Don't embed a full-page scanned image as the content of a page in an untagged document. If the document is tagged, a large image is fine.
 9. After compiling, verify instead of trusting the source. Run `pdfcheck --canvas file.pdf` from the pdfcheck repository: it predicts Ally's issues and score for the checks above and prints suggestions.
 
@@ -170,7 +175,7 @@ Notes for the Skill:
 ## 6. Open questions (no Ally data yet)
 
 - Whether missing alt text and missing table headers shrink on longer documents, as contrast does.
-- Whether a small amount of low-contrast text (one gray footer line) costs as much as a full page.
+- How much low-contrast text it takes to be charged in full (four letters in 18 pages cost almost nothing; batch `ally-2026-11`).
 - Scores for repeated issues (several figures, only some without alt text).
 - Beamer slides, math (Ally may not check math at all), links, lists, footnotes and bibliographies.
 - Real documents with many pages. Every test file here was one to three pages long.

@@ -43,6 +43,8 @@ def _walk_structure(
     active_table: int | None = None,
     table_cells: list[int] | None = None,
     table_rows: list[int] | None = None,
+    table_pages: list[set[int]] | None = None,
+    page_numbers: dict[int, int] | None = None,
 ) -> None:
     try:
         obj = node.get_object()
@@ -68,6 +70,8 @@ def _walk_structure(
                 table_cells.append(0)
             if table_rows is not None:
                 table_rows.append(0)
+            if table_pages is not None:
+                table_pages.append(set())
         elif resolved == "/TR" and active_table is not None:
             if table_rows is not None:
                 table_rows[active_table] += 1
@@ -76,11 +80,28 @@ def _walk_structure(
                 table_headers[active_table] = True
             if table_cells is not None:
                 table_cells[active_table] += 1
+    if active_table is not None and table_pages is not None and page_numbers:
+        _note_page(obj.get("/Pg"), page_numbers, table_pages[active_table])
     children = obj.get("/K", [])
     if not isinstance(children, list):
         children = [children]
     for child in children:
-        _walk_structure(child, rolemap, output, seen, table_headers, active_table, table_cells, table_rows)
+        if active_table is not None and table_pages is not None and page_numbers:
+            # Marked-content references carry their own /Pg.
+            try:
+                kid = child.get_object()
+                if hasattr(kid, "get") and "/S" not in kid:
+                    _note_page(kid.get("/Pg"), page_numbers, table_pages[active_table])
+            except AttributeError:
+                pass
+        _walk_structure(child, rolemap, output, seen, table_headers, active_table, table_cells, table_rows,
+                        table_pages, page_numbers)
+
+
+def _note_page(ref: Any, page_numbers: dict[int, int], pages: set[int]) -> None:
+    number = page_numbers.get(getattr(ref, "idnum", None))
+    if number is not None:
+        pages.add(number)
 
 
 def _srgb_to_linear(channel: float) -> float:
@@ -138,6 +159,17 @@ def _contrast_against_white(rgb: tuple[float, float, float], alpha: float) -> fl
 
 
 _TEXT_SHOWING = {"Tj", "TJ", "'", '"'}
+# WCAG 2.x minimum contrast for normal-size text; Ally matched it (probes C05, C06).
+LOW_CONTRAST = 4.5
+
+
+def _bytes_per_glyph(resources: Any, font_name: Any) -> int:
+    """2 for composite (Type0) fonts, which LuaLaTeX uses throughout, else 1."""
+    try:
+        font = resources.get("/Font").get_object().get(_name(font_name)).get_object()
+        return 2 if _name(font.get("/Subtype")) == "/Type0" else 1
+    except Exception:
+        return 1
 
 
 def _multiply(a: list[float], b: list[float]) -> list[float]:
@@ -160,16 +192,29 @@ class _PageScan:
 
     def __init__(self) -> None:
         self.lowest_contrast: float | None = None
+        self.lowest_rgb: tuple[float, float, float] | None = None
         self.visible_text_chars = 0
+        # Glyphs painted below WCAG's 4.5:1 against white.
+        self.low_contrast_glyphs = 0
+        self.glyphs = 0
         self.image_boxes: list[tuple[float, float, float, float]] = []
 
-    def text(self, ratio: float | None, operands: list[Any]) -> None:
-        # Bytes, not characters: two-byte fonts count double. Precise enough
-        # to tell a footer from a page of text.
+    def text(self, ratio: float | None, operands: list[Any], bytes_per_glyph: int = 1,
+             rgb: tuple[float, float, float] | None = None) -> None:
+        # visible_text_chars counts bytes, not characters: two-byte fonts count
+        # double. Precise enough to tell a footer from a page of text.
         strings = operands[0] if operands and isinstance(operands[0], list) else operands
-        self.visible_text_chars += sum(len(x) for x in strings if isinstance(x, (bytes, str)))
+        size = sum(len(x) for x in strings if isinstance(x, (bytes, str)))
+        self.visible_text_chars += size
+        # pypdf decodes some strings as text, so count glyphs from the raw bytes.
+        raw = sum(len(getattr(x, "original_bytes", x)) for x in strings if isinstance(x, (bytes, str)))
+        glyphs = max(1, raw // bytes_per_glyph) if raw else 0
+        self.glyphs += glyphs
         if ratio is not None:
-            self.lowest_contrast = ratio if self.lowest_contrast is None else min(self.lowest_contrast, ratio)
+            if ratio < LOW_CONTRAST:
+                self.low_contrast_glyphs += glyphs
+            if self.lowest_contrast is None or ratio < self.lowest_contrast:
+                self.lowest_contrast, self.lowest_rgb = ratio, rgb
 
 
 def _scan_content(stream_owner: Any, resources: Any, reader: PdfReader, scan: _PageScan,
@@ -180,7 +225,7 @@ def _scan_content(stream_owner: Any, resources: Any, reader: PdfReader, scan: _P
         return
     # Fill rgb (None = unknown colour), fill colour-space components, fill
     # alpha, text render mode, and current transformation matrix.
-    state: dict[str, Any] = {"rgb": (0.0, 0.0, 0.0), "space": 1, "alpha": 1.0, "mode": 0, "ctm": ctm}
+    state: dict[str, Any] = {"rgb": (0.0, 0.0, 0.0), "space": 1, "alpha": 1.0, "mode": 0, "ctm": ctm, "bpg": 1}
     stack: list[dict[str, Any]] = []
     for operands, operator in stream.operations:
         op = operator.decode("latin-1") if isinstance(operator, bytes) else str(operator)
@@ -211,6 +256,8 @@ def _scan_content(stream_owner: Any, resources: Any, reader: PdfReader, scan: _P
                 gstate = resources.get("/ExtGState").get_object().get(_name(operands[0])).get_object()
                 if "/ca" in gstate:
                     state["alpha"] = float(gstate["/ca"])
+            elif op == "Tf":
+                state["bpg"] = _bytes_per_glyph(resources, operands[0])
             elif op == "Tr":
                 state["mode"] = int(operands[0])
             elif op in _TEXT_SHOWING:
@@ -218,7 +265,8 @@ def _scan_content(stream_owner: Any, resources: Any, reader: PdfReader, scan: _P
                 # and 5 stroke rather than fill, which this check does not model.
                 if state["mode"] in {0, 2, 4, 6}:
                     rgb = state["rgb"]
-                    scan.text(None if rgb is None else _contrast_against_white(rgb, state["alpha"]), operands)
+                    ratio = None if rgb is None else _contrast_against_white(rgb, state["alpha"])
+                    scan.text(ratio, operands, state["bpg"], rgb)
                 elif state["mode"] in {1, 5}:
                     scan.text(None, operands)
             elif op == "BI":
@@ -267,7 +315,7 @@ def _scan_pages(reader: PdfReader, facts: DocumentFacts) -> None:
     white text on a dark box is a false positive. Rendered analysis is a TODO.
     """
     worst: float | None = None
-    for page in reader.pages:
+    for number, page in enumerate(reader.pages, start=1):
         scan = _PageScan()
         try:
             resources = page.get("/Resources")
@@ -279,8 +327,13 @@ def _scan_pages(reader: PdfReader, facts: DocumentFacts) -> None:
             pass
         facts.page_visible_text_chars.append(scan.visible_text_chars)
         facts.page_largest_image_coverage.append(_largest_image_coverage(scan.image_boxes, page.mediabox))
-        if scan.lowest_contrast is not None:
-            worst = scan.lowest_contrast if worst is None else min(worst, scan.lowest_contrast)
+        if scan.lowest_contrast is not None and (worst is None or scan.lowest_contrast < worst):
+            worst, facts.lowest_text_rgb = scan.lowest_contrast, scan.lowest_rgb
+        if scan.low_contrast_glyphs:
+            facts.low_contrast_glyphs += scan.low_contrast_glyphs
+            facts.low_contrast_pages.append(number)
+            share = scan.low_contrast_glyphs / max(1, scan.glyphs)
+            facts.low_contrast_page_share = max(facts.low_contrast_page_share, share)
     facts.lowest_text_contrast = worst
 
 
@@ -315,7 +368,13 @@ def extract_facts(path: str | Path, password: str | None = None) -> DocumentFact
             except Exception:
                 pass
             rolemap = {str(k): v for k, v in rolemap_obj.items()} if hasattr(rolemap_obj, "items") else {}
-            _walk_structure(tree, rolemap, facts.structure, set(), facts.table_header_presence, None, facts.table_cell_counts, facts.table_row_counts)
+            page_numbers = {}
+            for number, page in enumerate(reader.pages, start=1):
+                ref = getattr(page, "indirect_reference", None)
+                if ref is not None:
+                    page_numbers[ref.idnum] = number
+            _walk_structure(tree, rolemap, facts.structure, set(), facts.table_header_presence, None,
+                            facts.table_cell_counts, facts.table_row_counts, facts.table_pages, page_numbers)
         for page in reader.pages:
             try:
                 facts.page_text.append(page.extract_text() or "")

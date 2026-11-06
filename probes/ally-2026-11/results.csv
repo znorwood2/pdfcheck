@@ -1,0 +1,7 @@
+file,priority,pdfcheck_codes,pdfcheck_score,ally_score,ally_issue_codes,ally_fix_scores,processed_date,notes
+R01_one_grey_heading_word.pdf,1,Contrast:2,97,,,,,
+R02_red_section_number.pdf,1,Contrast:2,99,,,,,
+R03_all_text_red.pdf,1,Contrast:2,5,,,,,
+R04_long_page_241_grey.pdf,1,Contrast:2,5,,,,,
+R05_long_page_40_grey.pdf,2,Contrast:2,80,,,,,
+T01_table_retagged_as_div.pdf,2,none,100,,,,,

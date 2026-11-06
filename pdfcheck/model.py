@@ -30,8 +30,17 @@ class DocumentFacts:
     table_header_presence: list[bool] = field(default_factory=list)
     table_cell_counts: list[int] = field(default_factory=list)
     table_row_counts: list[int] = field(default_factory=list)
+    # Page numbers (1-based) each table's tagged content is on, where known.
+    table_pages: list[set[int]] = field(default_factory=list)
     # Lowest WCAG contrast ratio of painted text against an assumed white page.
     lowest_text_contrast: float | None = None
+    # Fill colour (sRGB, 0-1) of that lightest text, when known.
+    lowest_text_rgb: tuple[float, float, float] | None = None
+    # Glyphs below 4.5:1 and the pages (1-based) they are on.
+    low_contrast_glyphs: int = 0
+    low_contrast_pages: list[int] = field(default_factory=list)
+    # Largest share of one page's glyphs that are below 4.5:1.
+    low_contrast_page_share: float = 0.0
     # Per page: approximate count of visibly painted characters, and the
     # largest fraction of the page covered by a single image.
     page_visible_text_chars: list[int] = field(default_factory=list)
@@ -76,6 +85,9 @@ class Finding:
     ally_code: str | None = None
     page: int | None = None
     occurrences: int = 1
+    # For Contrast:2: the fraction of the full penalty expected, when only a
+    # little text fails (see canvas.contrast_scale). None means all of it.
+    scale: float | None = None
     # Why confidence is below high, in plain language.
     confidence_note: str | None = None
 
