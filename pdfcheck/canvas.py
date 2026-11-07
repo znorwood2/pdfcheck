@@ -227,25 +227,39 @@ def run_canvas_checks(facts: DocumentFacts) -> list[Finding]:
     # same table cut to two rows or one row (probes Z01, Z02), a one-cell
     # table (X01) or a two-row table spread over three pages (Y01, Y02).
     rows = facts.table_row_counts or [None] * len(facts.table_header_presence)
-    table_pages = facts.table_pages or [set()] * len(facts.table_header_presence)
+    count_tables = len(facts.table_header_presence)
+    table_pages = facts.table_pages or [set()] * count_tables
+    presentation = facts.table_presentation or [False] * count_tables
     flagged = [
-        pages for present, count, pages in zip(facts.table_header_presence, rows, table_pages)
+        (pages, layout)
+        for present, count, pages, layout in zip(facts.table_header_presence, rows, table_pages, presentation)
         if not present and (count is None or count >= MIN_TABLE_ROWS)
     ]
     if flagged:
         n = len(flagged)
         verb = "has" if n == 1 else "have"
-        where = _page_list(set().union(*flagged))
-        out.append(_finding(
-            "TableHeaders:2", "Table is missing headers", "major",
+        where = _page_list(set().union(*(pages for pages, _ in flagged)))
+        layouts = sum(layout for _, layout in flagged)
+        message = (
             f"{_plural(n, 'tagged table')} with {MIN_TABLE_ROWS} or more rows {verb} no header cells"
             + (f" ({where})" if where else "")
             + ", so screen readers cannot announce what each column or row means. (Ally ignores tables of 1-2 rows.)"
-            + (" Ally charged 11 such tables the same as one." if n > 1 else ""),
+            + (" Ally charged 11 such tables the same as one." if n > 1 else "")
+        )
+        if layouts:
+            # LaTeX's table/tagging=presentation keeps the Table/TR/TD tags and
+            # adds ARIA role=presentation. Ally still flagged the November 2026
+            # exam after all 11 of its layout tables were marked this way.
+            which = "All of them are" if layouts == n else f"{layouts} of them are"
+            message += (f" {which} marked as layout tables (ARIA role=presentation, which LaTeX's "
+                        "table/tagging=presentation adds), but they are still tagged Table, and Ally still flags them.")
+        out.append(_finding(
+            "TableHeaders:2", "Table is missing headers", "major", message,
             "If a table holds data, mark its header row: \\tagpdfsetup{table/header-rows={1}} before the tabular. "
-            "If it only lays things out (a grid of graphs, answer checkboxes, aligned choices), mark it as a "
-            "layout table instead: \\tagpdfsetup{table/tagging=presentation} before it, or use minipages "
-            "instead of a tabular.",
+            "If it only lays things out (a grid of graphs, answer checkboxes, aligned choices), don't build it with "
+            "a tabular: place the pieces with side-by-side minipages, or use a list for checkbox choices. "
+            "\\tagpdfsetup{table/tagging=presentation} does not help in Ally; whether table/tagging=false does is "
+            "untested, so if you try it, re-run pdfcheck to see whether any Table tags remain.",
             occurrences=n,
         ))
 

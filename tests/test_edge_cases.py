@@ -57,6 +57,27 @@ class EdgeCaseTests(unittest.TestCase):
         self.assertIn("table/tagging=presentation", finding.suggestion)
         self.assertEqual(69, predict_score(findings).score)
 
+    def test_presentation_tables_are_recognised_but_still_flagged(self):
+        from pypdf.generic import DictionaryObject, NameObject, TextStringObject
+        from pdfcheck.extract import _has_presentation_role
+        role = DictionaryObject({NameObject("/O"): NameObject("/ARIA-1.1"),
+                                 NameObject("/role"): TextStringObject("presentation")})
+        table = DictionaryObject({NameObject("/S"): NameObject("/Table"),
+                                  NameObject("/C"): NameObject("/ARIA-role-presentation")})
+        self.assertTrue(_has_presentation_role(table, {"/ARIA-role-presentation": role}))
+        self.assertFalse(_has_presentation_role(table, {}))
+        direct = DictionaryObject({NameObject("/S"): NameObject("/Table"), NameObject("/A"): role})
+        self.assertTrue(_has_presentation_role(direct, {}))
+
+        facts = DocumentFacts(path=Path("layout.pdf"), page_count=1, tagged=True, title="Title", language="en")
+        facts.structure = [StructureElement("/Table", "/Table")]
+        facts.table_header_presence = [False]
+        facts.table_row_counts = [4]
+        facts.table_presentation = [True]
+        finding = next(x for x in run_canvas_checks(facts) if x.ally_code == "TableHeaders:2")
+        self.assertIn("still flags them", finding.message)
+        self.assertIn("does not help in Ally", finding.suggestion)
+
     def test_table_pages_are_read_from_the_tags(self):
         from pdfcheck.extract import extract_facts
         facts = extract_facts(Path(__file__).parent / "fixtures" / "ally-2026-09" / "14_table_without_headers.pdf")

@@ -55,7 +55,7 @@ Each finding explains what was found, why it matters to Ally, and how to fix it 
 - skipped heading level (`HeadingsSequential:3`)
 - heading level beyond H6 (`HeadingsHigherLevel:3`)
 - missing Figure alternative text, including a filename such as `figure.png` (`AlternativeText:2`)
-- tagged tables without TH cells (`TableHeaders:2`); only tables with at least three rows are checked, because Ally ignored fixture 14's table when cut to two rows or one. The finding lists the pages, and suggests presentation tagging for layout tables. Ally charges many such tables the same as one
+- tagged tables without TH cells (`TableHeaders:2`); only tables with at least three rows are checked, because Ally ignored fixture 14's table when cut to two rows or one. The finding lists the pages and says when tables carry ARIA `role=presentation` (LaTeX's `table/tagging=presentation`): Ally still flagged those. Ally charges many such tables the same as one
 - low-contrast text (`Contrast:2`): computes the WCAG contrast ratio of each painted text colour against an assumed white page and flags anything below 4.5:1. It understands `g`/`rg`/`k`, `cs`/`scn` with Gray/RGB/CMYK/ICC colour spaces, fill transparency, and text inside form XObjects, and ignores invisible OCR text (render mode 3). Ally's threshold matched WCAG in October 2026 probes: #808080 (3.9:1) was flagged and #767676 (4.5:1) was not. The finding counts the failing characters and names their pages and colour
 
 Role maps are resolved, so modern LaTeX structure names such as `/section` mapped to `/H1` are understood. A literal `/H7` remains detectable even when role-mapped to `/H6`, matching the observed Ally result.
@@ -131,7 +131,7 @@ Each folder under `probes/` is a batch of PDFs, each a copy of a scored fixture 
 - `ally-2026-10c/`: 7 probes on contrast over three pages and what triggers `Scanned`; results and two screenshots recorded. Ally ignored the one-cell table in X01.
 - `ally-2026-10d/`: 5 probes; Ally did not flag the constructed 2x2 table, so only the untagged probes were informative.
 - `ally-2026-10e/`: 4 probes; results recorded. Two-row and one-row tables were not checked; blank pages do not count toward contrast scaling.
-- `ally-2026-11/`: 6 probes on how much low-contrast text it takes to be charged (one grey word, a red section number, an all-red page, grey lines on a long page) and a layout table retagged as `Div`; pending.
+- `ally-2026-11/`: 6 probes on how much low-contrast text it takes to be charged (one grey word, a red section number, an all-red page, grey lines on a long page) and a layout table retagged as `Div` (presentation tagging alone did not help); pending.
 
 1. Upload the PDFs to a Canvas course where Ally is enabled (an unpublished sandbox course is fine).
 2. Wait for Ally to finish processing, then click each file's Ally score indicator (the small gauge icon next to the file name) to open its feedback window. The issues are listed there; if only one is shown, look for an option to view all issues.

@@ -85,7 +85,8 @@ The model below reproduces all 62 observations to within 1 point. Ally's scores 
 ### Tables
 - A tagged table of 3+ rows with no TH cells costs 31.
 - **Many such tables cost the same as one.** The 18-page exam had 11 headerless tables and scored 69, the one-table score; Ally said fixing them would raise it to 100.
-- In that exam every table was a layout table made with `tabular`: a 2×3 grid of graphs, "Graph A / Graph B / ..." checkbox lists, and positive/negative/zero answer boxes. Header rows make no sense there. Mark them as layout with `\tagpdfsetup{table/tagging=presentation}` before the `tabular` (or lay them out with minipages). Ally's response to presentation tagging is **untested**; probe T01 checks a table retagged as `Div`.
+- In that exam every table was a layout table made with `tabular`: a 2×3 grid of graphs, "Graph A / Graph B / ..." checkbox lists, and positive/negative/zero answer boxes. Header rows make no sense there.
+- **`\tagpdfsetup{table/tagging=presentation}` does not satisfy Ally.** With it before all 11 layout tables, the exam was still flagged for missing table headers (November 2026). LaTeX (TeX Live 2026) keeps the `Table`/`TR`/`TD` tags and only adds an attribute class with ARIA `role=presentation`; Ally evidently ignores it. Build layout grids from side-by-side minipages instead, and checkbox choices as a list. Whether `table/tagging=false` removes the `Table` tags is untested. Probe T01 checks that a table retagged as `Div` passes.
 - **Tables with 1 or 2 rows were not checked at all**, presumably because Ally treats them as layout tables.
 - `\tagpdfsetup{table/header-rows={1}}` before the `tabular` produced TH cells, and the table passed.
 
@@ -160,7 +161,7 @@ Notes for the Skill:
    - Flag any missing `alt`, since LaTeX will silently insert the filename.
    - For purely decorative images, consider the `artifact` option (**untested** in Ally).
 5. Documents longer than two pages use `\section`-style headings, not `\textbf` lines. The first heading is level 1 and no levels are skipped.
-6. Tables with three or more rows declare header rows (`\tagpdfsetup{table/header-rows={1}}`, or the equivalent for the user's LaTeX version). A `tabular` used only for layout (a grid of graphs, checkbox choices) is marked `\tagpdfsetup{table/tagging=presentation}` instead.
+6. Tables with three or more rows declare header rows (`\tagpdfsetup{table/header-rows={1}}`, or the equivalent for the user's LaTeX version). Don't use a `tabular` only for layout (a grid of graphs, checkbox choices): Ally flags it even with `table/tagging=presentation`. Use minipages or a list.
 7. No text colour lighter than `#767676` on a white page. Search for:
    - `\color{gray}`, `\color{lightgray}`, `gray!NN`, `black!NN` with NN below about 54
    - light `hyperref` link colours (`colorlinks` with `linkcolor`/`urlcolor`)

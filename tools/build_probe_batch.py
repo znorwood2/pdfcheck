@@ -769,7 +769,7 @@ def _():
 
 
 @probe("T01_table_retagged_as_div.pdf", "14_table_without_headers.pdf", "Table, TR and TD tags renamed Div (a layout table)",
-       "Does Ally accept a layout grid tagged as Div? Expect 100. The fix for the exam's graph grids and checkbox lists.", 2)
+       "Does Ally accept a layout grid tagged as Div? Expect 100. table/tagging=presentation keeps Table tags and Ally still flagged it.", 1)
 def _():
     writer = load("14_table_without_headers.pdf")
     for _, element in struct_with_parents(writer):

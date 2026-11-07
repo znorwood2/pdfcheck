@@ -45,6 +45,8 @@ def _walk_structure(
     table_rows: list[int] | None = None,
     table_pages: list[set[int]] | None = None,
     page_numbers: dict[int, int] | None = None,
+    table_presentation: list[bool] | None = None,
+    classmap: dict[str, Any] | None = None,
 ) -> None:
     try:
         obj = node.get_object()
@@ -72,6 +74,8 @@ def _walk_structure(
                 table_rows.append(0)
             if table_pages is not None:
                 table_pages.append(set())
+            if table_presentation is not None:
+                table_presentation.append(_has_presentation_role(obj, classmap or {}))
         elif resolved == "/TR" and active_table is not None:
             if table_rows is not None:
                 table_rows[active_table] += 1
@@ -95,7 +99,38 @@ def _walk_structure(
             except AttributeError:
                 pass
         _walk_structure(child, rolemap, output, seen, table_headers, active_table, table_cells, table_rows,
-                        table_pages, page_numbers)
+                        table_pages, page_numbers, table_presentation, classmap)
+
+
+def _attribute_dicts(value: Any) -> list[Any]:
+    try:
+        value = value.get_object()
+    except Exception:
+        pass
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            out.extend(_attribute_dicts(item))
+        return out
+    return [value] if hasattr(value, "get") else []
+
+
+def _has_presentation_role(obj: Any, classmap: dict[str, Any]) -> bool:
+    """True when an element carries ARIA role=presentation, directly (/A) or
+    through an attribute class (/C), as LaTeX's table/tagging=presentation does."""
+    attributes = _attribute_dicts(obj.get("/A"))
+    classes = obj.get("/C")
+    try:
+        classes = classes.get_object()
+    except Exception:
+        pass
+    for name in classes if isinstance(classes, list) else [classes]:
+        if hasattr(name, "get_object") and not isinstance(name, str):
+            name = name.get_object()
+        if isinstance(name, (int, float)) or name is None:
+            continue  # revision numbers in a /C array
+        attributes.extend(_attribute_dicts(classmap.get(str(name))))
+    return any(_name(a.get("/role")).strip().lower() == "presentation" for a in attributes)
 
 
 def _note_page(ref: Any, page_numbers: dict[int, int], pages: set[int]) -> None:
@@ -373,8 +408,15 @@ def extract_facts(path: str | Path, password: str | None = None) -> DocumentFact
                 ref = getattr(page, "indirect_reference", None)
                 if ref is not None:
                     page_numbers[ref.idnum] = number
+            classmap_obj = tree_obj.get("/ClassMap", {})
+            try:
+                classmap_obj = classmap_obj.get_object()
+            except Exception:
+                pass
+            classmap = {str(k): v for k, v in classmap_obj.items()} if hasattr(classmap_obj, "items") else {}
             _walk_structure(tree, rolemap, facts.structure, set(), facts.table_header_presence, None,
-                            facts.table_cell_counts, facts.table_row_counts, facts.table_pages, page_numbers)
+                            facts.table_cell_counts, facts.table_row_counts, facts.table_pages, page_numbers,
+                            facts.table_presentation, classmap)
         for page in reader.pages:
             try:
                 facts.page_text.append(page.extract_text() or "")

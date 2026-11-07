@@ -32,6 +32,9 @@ class DocumentFacts:
     table_row_counts: list[int] = field(default_factory=list)
     # Page numbers (1-based) each table's tagged content is on, where known.
     table_pages: list[set[int]] = field(default_factory=list)
+    # Whether each table carries ARIA role=presentation (LaTeX's
+    # table/tagging=presentation). Ally still checked such tables (November 2026).
+    table_presentation: list[bool] = field(default_factory=list)
     # Lowest WCAG contrast ratio of painted text against an assumed white page.
     lowest_text_contrast: float | None = None
     # Fill colour (sRGB, 0-1) of that lightest text, when known.
